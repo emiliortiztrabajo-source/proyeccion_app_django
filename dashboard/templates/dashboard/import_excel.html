@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+
+{% block title %}Importar Excel{% endblock %}
+
+{% block content %}
+<section class="panel panel-narrow">
+  <h2>Importar Excel inicial / actualización</h2>
+  <p>Esta acción carga las hojas del libro a la base de datos para operar sin depender del archivo.</p>
+  <form method="post" enctype="multipart/form-data" class="card-form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn-primary">Importar</button>
+  </form>
+</section>
+{% endblock %}

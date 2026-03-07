@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+
+{% block title %}Editar gasto{% endblock %}
+
+{% block content %}
+<section class="panel panel-narrow">
+  <h2>Editar gasto</h2>
+  <p>{{ expense.provider.name }} · {{ expense.year }}/{{ expense.month }}</p>
+  <form method="post" class="card-form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn-primary">Guardar cambios</button>
+    <a href="{% url 'dashboard:home' %}" class="btn-secondary">Cancelar</a>
+  </form>
+</section>
+{% endblock %}

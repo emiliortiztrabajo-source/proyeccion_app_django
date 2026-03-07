@@ -1,0 +1,223 @@
+{% extends 'base.html' %}
+{% load dashboard_tags %}
+
+{% block title %}Dashboard financiero{% endblock %}
+
+{% block content %}
+{% if no_data %}
+<section class="panel panel-narrow">
+  <h2>Sin datos importados</h2>
+  <p>Importá el Excel inicial para comenzar a operar.</p>
+  {% if user.is_staff %}
+    <a href="{% url 'dashboard:import_excel' %}" class="btn-primary">Importar Excel</a>
+  {% endif %}
+</section>
+{% else %}
+<section class="dashboard-head">
+  <h2>📈 Rendimiento FCI — Interés diario</h2>
+  <form method="get" class="filter-grid">
+    <div class="form-row">{{ filter_form.year.label_tag }}{{ filter_form.year }}</div>
+    <div class="form-row">{{ filter_form.month.label_tag }}{{ filter_form.month }}</div>
+    <div class="form-row">{{ filter_form.provider.label_tag }}{{ filter_form.provider }}</div>
+    <div class="form-row">{{ filter_form.payment_date.label_tag }}{{ filter_form.payment_date }}</div>
+    <button class="btn-primary" type="submit">Aplicar filtros</button>
+  </form>
+</section>
+
+<section class="kpi-grid">
+  <article class="kpi-card">
+    <h4>Total rendimientos del mes — {{ month_name }} {{ selected_year }}</h4>
+    <p>$ {{ total_mes|money_ar }}</p>
+  </article>
+  <article class="kpi-card">
+    <h4>Total rendimientos anual — {{ selected_year }}</h4>
+    <p>$ {{ total_anual|money_ar }}</p>
+  </article>
+  <article class="kpi-card">
+    <h4>Total gastos (filtrado)</h4>
+    <p>$ {{ expense_total|money_ar }}</p>
+  </article>
+  <article class="kpi-card">
+    <h4>Total ingresos del mes</h4>
+    <p>$ {{ income_total|money_ar }}</p>
+  </article>
+</section>
+
+<section class="main-grid">
+  <aside class="panel cal-panel">
+    <h3>{{ month_name }} {{ selected_year }}</h3>
+    <div class="mini-dow">
+      {% for d in calendar_payload.dow_labels %}<div>{{ d }}</div>{% endfor %}
+    </div>
+    {% for week in calendar_payload.weeks %}
+      <div class="mini-week">
+      {% for day in week %}
+        <div class="mini-cell {% if not day.in_month %}mini-off{% endif %}">
+          {% if day.in_month %}
+            <div class="mini-day">{{ day.date.day }}</div>
+            <div class="mini-num {% if day.interes|default_if_none:0 >= 0 %}pos{% else %}neg{% endif %}">
+              $ {{ day.interes|money_compact_ar }}
+            </div>
+            <div class="mini-sub">Interés día</div>
+          {% endif %}
+        </div>
+      {% endfor %}
+      </div>
+    {% endfor %}
+  </aside>
+
+  <div class="panel chart-panel">
+    <h3>Interés diario acumulado — Mes a mes — Año {{ selected_year }}</h3>
+    <div class="chart-wrap">
+      <canvas id="chartInteresMes"></canvas>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h3>🧾 Bolsas de gastos</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>PAGO DIA</th>
+          <th>Proveedor</th>
+          <th>Nueva Clasificación</th>
+          <th>Monto</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for exp in expense_rows %}
+          <tr>
+            <td>{{ exp.payment_date|date:'d/m/Y'|default:'—' }}</td>
+            <td>{{ exp.payment_label }}</td>
+            <td>{{ exp.provider.name }}</td>
+            <td>{{ exp.nueva_clasificacion|default:'—' }}</td>
+            <td>$ {{ exp.amount|money_ar }}</td>
+            <td>
+              {% if perms.dashboard.change_expense %}
+                <a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6">No hay gastos para los filtros seleccionados.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="double-grid">
+  <article class="panel">
+    <h3>Ingresos diarios del mes</h3>
+    <div class="table-wrap short">
+      <table>
+        <thead><tr><th>Fecha</th><th>Monto</th><th></th></tr></thead>
+        <tbody>
+          {% for inc in income_rows %}
+            <tr>
+              <td>{{ inc.entry_date|date:'d/m/Y' }}</td>
+              <td>$ {{ inc.amount|money_ar }}</td>
+              <td>{% if perms.dashboard.change_incomeentry %}<a href="{% url 'dashboard:income_edit' inc.id %}">Editar</a>{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="3">No hay ingresos cargados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="panel">
+    <h3>Proyección diaria del mes</h3>
+    <div class="table-wrap short">
+      <table>
+        <thead><tr><th>Fecha</th><th>Interés diario</th><th>Total</th></tr></thead>
+        <tbody>
+          {% for row in month_rows %}
+            <tr>
+              <td>{{ row.fecha|date:'d/m/Y' }}</td>
+              <td>$ {{ row.interes_diario|money_ar }}</td>
+              <td>$ {{ row.total|money_ar }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="3">Sin proyección para el mes seleccionado.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+</section>
+
+<section class="panel">
+  <h3>🧮 Calculadoras</h3>
+  <div class="double-grid">
+    <article class="calc-box">
+      <h4>⏩ Adelantar pago</h4>
+      <div class="form-row">
+        <label for="adelantoPago">Pago a adelantar</label>
+        <select id="adelantoPago">
+          {% for exp in expense_rows|slice:':200' %}
+            <option value="{{ exp.amount }}">{{ exp.provider.name }} — {{ exp.payment_date|date:'d/m/Y' }} — $ {{ exp.amount|money_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="adelantoDias">Días de adelanto</label>
+        <input id="adelantoDias" type="number" min="0" max="365" value="0">
+      </div>
+      <div class="form-row">
+        <label for="adelantoModo">Modo</label>
+        <select id="adelantoModo">
+          <option>Compuesto (capitaliza)</option>
+          <option>Simple</option>
+        </select>
+      </div>
+      <button type="button" class="btn-primary" data-rate="{{ daily_rate_pct }}" onclick="calcAdelantoFromButton(this)">Calcular</button>
+      <div id="adelantoResultado" class="calc-result"></div>
+    </article>
+
+    <article class="calc-box">
+      <h4>📈 Proyección rendimiento FCI</h4>
+      <div class="form-row">
+        <label for="fciCapital">Capital ($)</label>
+        <input id="fciCapital" type="number" min="0" step="100000" value="1000000">
+      </div>
+      <div class="form-row">
+        <label for="fciDias">Días</label>
+        <input id="fciDias" type="number" min="0" max="3650" value="30">
+      </div>
+      <div class="form-row">
+        <label for="fciTasa">Tasa diaria (%)</label>
+        <input id="fciTasa" type="number" min="0" step="0.0001" value="{{ daily_rate_pct|floatformat:4 }}">
+      </div>
+      <div class="form-row">
+        <label for="fciModo">Modo</label>
+        <select id="fciModo">
+          <option>Compuesto (capitaliza)</option>
+          <option>Simple</option>
+        </select>
+      </div>
+      <button type="button" class="btn-primary" onclick="calcFCI()">Calcular</button>
+      <div id="fciResultado" class="calc-result"></div>
+    </article>
+  </div>
+</section>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if not no_data %}
+{{ chart_labels|json_script:"chart-labels" }}
+{{ chart_values|json_script:"chart-values" }}
+<script>
+  const labels = JSON.parse(document.getElementById('chart-labels').textContent);
+  const values = JSON.parse(document.getElementById('chart-values').textContent);
+  renderInteresChart('chartInteresMes', labels, values);
+</script>
+{% endif %}
+{% endblock %}

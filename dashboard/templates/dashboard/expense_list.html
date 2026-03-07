@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% load dashboard_tags %}
+
+{% block title %}Gastos{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <h2>Gastos cargados</h2>
+  {% if scenario %}
+    <p>Escenario activo: {{ scenario }}</p>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Proveedor</th>
+          <th>Pago</th>
+          <th>Monto</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for exp in expenses %}
+        <tr>
+          <td>{{ exp.payment_date|date:'d/m/Y' }}</td>
+          <td>{{ exp.provider.name }}</td>
+          <td>{{ exp.payment_label }}</td>
+          <td>$ {{ exp.amount|money_ar }}</td>
+          <td><a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5">No hay gastos cargados.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

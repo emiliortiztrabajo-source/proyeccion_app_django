@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+
+{% block title %}Ingreso{% endblock %}
+
+{% block content %}
+<section class="panel panel-narrow">
+  <h2>{{ title }}</h2>
+  <form method="post" class="card-form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn-primary">Guardar</button>
+    <a href="{% url 'dashboard:home' %}" class="btn-secondary">Volver</a>
+  </form>
+</section>
+{% endblock %}

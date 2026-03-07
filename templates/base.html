@@ -1,0 +1,51 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Proyección Financiera{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'dashboard/css/dashboard.css' %}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container head-wrap">
+      <div class="brand-mark">MP</div>
+      <div>
+        <h1>Municipio de Pilar</h1>
+        <p>Dirección de Contaduría — Proyección de Rendimientos</p>
+      </div>
+      {% if user.is_authenticated %}
+        <nav class="top-nav">
+          <a href="{% url 'dashboard:home' %}">Dashboard</a>
+          <a href="{% url 'dashboard:expense_list' %}">Gastos</a>
+          <a href="{% url 'dashboard:income_create' %}">Nuevo ingreso</a>
+          {% if user.is_staff %}
+            <a href="{% url 'dashboard:import_excel' %}">Importar Excel</a>
+          {% endif %}
+          <a href="{% url 'admin:index' %}">Admin</a>
+          <form method="post" action="{% url 'logout' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn-link">Salir</button>
+          </form>
+        </nav>
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="container page-content">
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="msg {{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="{% static 'dashboard/js/dashboard.js' %}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
