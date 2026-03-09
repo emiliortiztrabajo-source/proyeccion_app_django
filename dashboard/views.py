@@ -8,7 +8,7 @@ from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
-from .forms import DashboardFilterForm, ExcelImportForm, ExpenseForm, IncomeEntryForm
+from .forms import DashboardFilterForm, ExcelImportForm, ExpenseFilterForm, ExpenseForm, IncomeEntryForm
 from .models import Expense, IncomeEntry, Provider, Scenario
 from .services.dashboard_logic import (
 	build_year_cash_projection,
@@ -37,10 +37,13 @@ def dashboard_home(request):
 		return render(request, "dashboard/home.html", {"no_data": True})
 
 	provider_qs = scenario.expenses.values_list("provider_id", flat=True).distinct()
-	form = DashboardFilterForm(
+	period_form = DashboardFilterForm(
 		request.GET or None,
 		year=scenario.year,
 		start_month=scenario.start_month,
+	)
+	expense_filter_form = ExpenseFilterForm(
+		request.GET or None,
 		provider_queryset=Provider.objects.filter(id__in=provider_qs),
 	)
 
@@ -49,11 +52,13 @@ def dashboard_home(request):
 	selected_provider = None
 	selected_payment_date = None
 
-	if form.is_valid():
-		selected_year = form.cleaned_data["year"]
-		selected_month = int(form.cleaned_data["month"])
-		selected_provider = form.cleaned_data.get("provider")
-		selected_payment_date = form.cleaned_data.get("payment_date")
+	if period_form.is_valid():
+		selected_year = period_form.cleaned_data["year"]
+		selected_month = int(period_form.cleaned_data["month"])
+
+	if expense_filter_form.is_valid():
+		selected_provider = expense_filter_form.cleaned_data.get("provider")
+		selected_payment_date = expense_filter_form.cleaned_data.get("payment_date")
 
 	cash_rows = build_year_cash_projection(scenario=scenario, year=selected_year)
 	month_rows = [row for row in cash_rows if row["mes"] == selected_month]
@@ -80,7 +85,8 @@ def dashboard_home(request):
 
 	context = {
 		"scenario": scenario,
-		"filter_form": form,
+		"period_form": period_form,
+		"expense_filter_form": expense_filter_form,
 		"month_name": MONTH_NAME_ES[selected_month],
 		"selected_year": selected_year,
 		"selected_month": selected_month,
