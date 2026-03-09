@@ -53,6 +53,21 @@ input, select {
 .chart-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
 .section-meta { margin: 0 0 10px; font-size: 13px; opacity: .9; }
 
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.panel-title-row h3 { margin: 0; }
+.btn-toggle-panel {
+  padding: 8px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.collapsible-body[hidden] { display: none; }
+
 .main-grid { display: grid; grid-template-columns: 1.1fr 1.9fr; gap: 16px; margin-bottom: 16px; }
 .double-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
@@ -106,4 +121,5 @@ th { background: rgba(15, 23, 42, .8); position: sticky; top: 0; }
   .main-grid, .double-grid { grid-template-columns: 1fr; }
   .chart-kpi-grid { grid-template-columns: 1fr; }
   .chart-wrap { height: 300px; }
+  .panel-title-row { flex-direction: column; align-items: flex-start; }
 }

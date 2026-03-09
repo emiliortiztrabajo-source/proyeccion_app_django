@@ -218,3 +218,26 @@ function calcFCI() {
     <div>Total estimado: <b>$ ${fmtMoneyAr(total)}</b></div>
   `;
 }
+
+function initExpensePanelToggle() {
+  const toggleButton = document.getElementById('toggleExpensePanel');
+  const panelContent = document.getElementById('expensePanelContent');
+  if (!toggleButton || !panelContent) return;
+
+  const setExpanded = (expanded) => {
+    toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggleButton.textContent = expanded ? 'Ocultar gastos' : 'Ver gastos';
+    panelContent.hidden = !expanded;
+  };
+
+  setExpanded(false);
+
+  toggleButton.addEventListener('click', () => {
+    const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
+    setExpanded(!isExpanded);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initExpensePanelToggle();
+});

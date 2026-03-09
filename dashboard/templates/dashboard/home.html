@@ -64,47 +64,61 @@
   </div>
 </section>
 
-<section class="panel">
-  <h3>🧾 Bolsas de gastos</h3>
-  <form method="get" class="filter-grid filter-grid--expense">
-    <input type="hidden" name="year" value="{{ selected_year }}">
-    <input type="hidden" name="month" value="{{ selected_month }}">
-    <div class="form-row">{{ expense_filter_form.provider.label_tag }}{{ expense_filter_form.provider }}</div>
-    <div class="form-row">{{ expense_filter_form.payment_date.label_tag }}{{ expense_filter_form.payment_date }}</div>
-    <button class="btn-primary" type="submit">Filtrar gastos</button>
-  </form>
-  <p class="section-meta">Total gastos (filtrado): <strong>$ {{ expense_total|money_ar }}</strong></p>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Fecha</th>
-          <th>PAGO DIA</th>
-          <th>Proveedor</th>
-          <th>Nueva Clasificación</th>
-          <th>Monto</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for exp in expense_rows %}
+<section class="panel panel-collapsible" id="expensePanel" data-panel-name="expense">
+  <div class="panel-title-row">
+    <h3>🧾 Bolsas de gastos</h3>
+    <button
+      id="toggleExpensePanel"
+      type="button"
+      class="btn-secondary btn-toggle-panel"
+      aria-controls="expensePanelContent"
+      aria-expanded="false"
+    >
+      Ver gastos
+    </button>
+  </div>
+
+  <div id="expensePanelContent" class="collapsible-body" hidden>
+    <form method="get" class="filter-grid filter-grid--expense">
+      <input type="hidden" name="year" value="{{ selected_year }}">
+      <input type="hidden" name="month" value="{{ selected_month }}">
+      <div class="form-row">{{ expense_filter_form.provider.label_tag }}{{ expense_filter_form.provider }}</div>
+      <div class="form-row">{{ expense_filter_form.payment_date.label_tag }}{{ expense_filter_form.payment_date }}</div>
+      <button class="btn-primary" type="submit">Filtrar gastos</button>
+    </form>
+    <p class="section-meta">Total gastos (filtrado): <strong>$ {{ expense_total|money_ar }}</strong></p>
+    <div class="table-wrap">
+      <table>
+        <thead>
           <tr>
-            <td>{{ exp.payment_date|date:'d/m/Y'|default:'—' }}</td>
-            <td>{{ exp.payment_label }}</td>
-            <td>{{ exp.provider.name }}</td>
-            <td>{{ exp.nueva_clasificacion|default:'—' }}</td>
-            <td>$ {{ exp.amount|money_ar }}</td>
-            <td>
-              {% if perms.dashboard.change_expense %}
-                <a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a>
-              {% endif %}
-            </td>
+            <th>Fecha</th>
+            <th>PAGO DIA</th>
+            <th>Proveedor</th>
+            <th>Nueva Clasificación</th>
+            <th>Monto</th>
+            <th></th>
           </tr>
-        {% empty %}
-          <tr><td colspan="6">No hay gastos para los filtros seleccionados.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {% for exp in expense_rows %}
+            <tr>
+              <td>{{ exp.payment_date|date:'d/m/Y'|default:'—' }}</td>
+              <td>{{ exp.payment_label }}</td>
+              <td>{{ exp.provider.name }}</td>
+              <td>{{ exp.nueva_clasificacion|default:'—' }}</td>
+              <td>$ {{ exp.amount|money_ar }}</td>
+              <td>
+                {% if perms.dashboard.change_expense %}
+                  <a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6">No hay gastos para los filtros seleccionados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
 </section>
 
@@ -177,6 +191,27 @@
 {{ chart_values|json_script:"chart-values" }}
 {{ calc_expense_options|json_script:"calc-expense-options" }}
 <script>
+  // Fallback local para asegurar el toggle aunque haya cache de static JS.
+  (function bindExpenseToggle() {
+    const toggleButton = document.getElementById('toggleExpensePanel');
+    const panelContent = document.getElementById('expensePanelContent');
+    if (!toggleButton || !panelContent) return;
+    if (toggleButton.dataset.boundToggle === '1') return;
+
+    const setExpanded = (expanded) => {
+      toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      toggleButton.textContent = expanded ? 'Ocultar gastos' : 'Ver gastos';
+      panelContent.hidden = !expanded;
+    };
+
+    setExpanded(false);
+    toggleButton.dataset.boundToggle = '1';
+    toggleButton.addEventListener('click', () => {
+      const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
+      setExpanded(!isExpanded);
+    });
+  })();
+
   const labels = JSON.parse(document.getElementById('chart-labels').textContent);
   const values = JSON.parse(document.getElementById('chart-values').textContent);
   renderInteresChart('chartInteresMes', labels, values);
@@ -190,6 +225,10 @@
     periodForm.querySelectorAll('select, input').forEach((el) => {
       el.addEventListener('change', () => periodForm.submit());
     });
+  }
+
+  if (typeof initExpensePanelToggle === 'function') {
+    initExpensePanelToggle();
   }
 </script>
 {% endif %}
