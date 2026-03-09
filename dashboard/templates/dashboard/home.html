@@ -114,12 +114,16 @@
     <article class="calc-box">
       <h4>⏩ Adelantar pago</h4>
       <div class="form-row">
-        <label for="adelantoPago">Pago a adelantar</label>
-        <select id="adelantoPago">
-          {% for exp in expense_rows|slice:':200' %}
-            <option value="{{ exp.amount }}">{{ exp.provider.name }} — {{ exp.payment_date|date:'d/m/Y' }} — $ {{ exp.amount|money_ar }}</option>
-          {% endfor %}
-        </select>
+        <label for="adelantoProveedor">Proveedor</label>
+        <select id="adelantoProveedor"></select>
+      </div>
+      <div class="form-row">
+        <label for="adelantoFechaPago">Fecha de pago</label>
+        <select id="adelantoFechaPago"></select>
+      </div>
+      <div class="form-row">
+        <label for="adelantoPago">Pago a adelantar (monto ya cargado)</label>
+        <select id="adelantoPago"></select>
       </div>
       <div class="form-row">
         <label for="adelantoDias">Días de adelanto</label>
@@ -132,7 +136,8 @@
           <option>Simple</option>
         </select>
       </div>
-      <button type="button" class="btn-primary" data-rate="{{ daily_rate_pct }}" onclick="calcAdelantoFromButton(this)">Calcular</button>
+      <p class="section-meta">Tasa diaria usada: <strong>0.0967%</strong></p>
+      <button type="button" class="btn-primary" data-rate-decimal="{{ adelanto_daily_rate_decimal }}" onclick="calcAdelantoFromButton(this)">Calcular</button>
       <div id="adelantoResultado" class="calc-result"></div>
     </article>
 
@@ -170,10 +175,15 @@
 {% if not no_data %}
 {{ chart_labels|json_script:"chart-labels" }}
 {{ chart_values|json_script:"chart-values" }}
+{{ calc_expense_options|json_script:"calc-expense-options" }}
 <script>
   const labels = JSON.parse(document.getElementById('chart-labels').textContent);
   const values = JSON.parse(document.getElementById('chart-values').textContent);
   renderInteresChart('chartInteresMes', labels, values);
+
+  const calcOptionsEl = document.getElementById('calc-expense-options');
+  const calcOptions = calcOptionsEl ? JSON.parse(calcOptionsEl.textContent) : [];
+  initAdelantoCalculator(calcOptions);
 
   const periodForm = document.getElementById('periodFilterForm');
   if (periodForm) {

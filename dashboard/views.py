@@ -80,6 +80,29 @@ def dashboard_home(request):
 	).order_by("entry_date")
 	income_total = monthly_incomes.aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
+	# Calculator options must come from the selected month only (independent from expense filters).
+	calc_expenses_qs = (
+		Expense.objects.filter(
+			scenario=scenario,
+			year=selected_year,
+			month=selected_month,
+		)
+		.select_related("provider")
+		.exclude(payment_date__isnull=True)
+		.exclude(amount=0)
+		.order_by("provider__name", "payment_date", "payment_label", "id")
+	)
+	calc_expense_options = [
+		{
+			"id": exp.id,
+			"provider": exp.provider.name.strip() if exp.provider and exp.provider.name else "",
+			"payment_date": exp.payment_date,
+			"payment_label": (exp.payment_label or "").strip(),
+			"amount": float(exp.amount or 0),
+		}
+		for exp in calc_expenses_qs[:1000]
+	]
+
 	chart_labels = [x["mes_nombre"] for x in monthly_summary]
 	chart_values = [float(x["interes_mes"] or 0) for x in monthly_summary]
 
@@ -102,6 +125,8 @@ def dashboard_home(request):
 		"total_mes": _sum_interest(month_rows),
 		"total_anual": _sum_interest(cash_rows),
 		"daily_rate_pct": float(scenario.daily_interest_rate * Decimal("100")),
+		"adelanto_daily_rate_decimal": "0.000967",
+		"calc_expense_options": calc_expense_options,
 		"today": date.today(),
 	}
 	return render(request, "dashboard/home.html", context)
