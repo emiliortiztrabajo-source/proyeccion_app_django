@@ -15,32 +15,12 @@
 {% else %}
 <section class="dashboard-head">
   <h2>📈 Rendimiento FCI — Interés diario</h2>
-  <form method="get" class="filter-grid">
-    <div class="form-row">{{ filter_form.year.label_tag }}{{ filter_form.year }}</div>
-    <div class="form-row">{{ filter_form.month.label_tag }}{{ filter_form.month }}</div>
-    <div class="form-row">{{ filter_form.provider.label_tag }}{{ filter_form.provider }}</div>
-    <div class="form-row">{{ filter_form.payment_date.label_tag }}{{ filter_form.payment_date }}</div>
-    <button class="btn-primary" type="submit">Aplicar filtros</button>
+  <form method="get" class="filter-grid filter-grid--period" id="periodFilterForm">
+    <div class="form-row">{{ period_form.year.label_tag }}{{ period_form.year }}</div>
+    <div class="form-row">{{ period_form.month.label_tag }}{{ period_form.month }}</div>
+    {% if request.GET.provider %}<input type="hidden" name="provider" value="{{ request.GET.provider }}">{% endif %}
+    {% if request.GET.payment_date %}<input type="hidden" name="payment_date" value="{{ request.GET.payment_date }}">{% endif %}
   </form>
-</section>
-
-<section class="kpi-grid">
-  <article class="kpi-card">
-    <h4>Total rendimientos del mes — {{ month_name }} {{ selected_year }}</h4>
-    <p>$ {{ total_mes|money_ar }}</p>
-  </article>
-  <article class="kpi-card">
-    <h4>Total rendimientos anual — {{ selected_year }}</h4>
-    <p>$ {{ total_anual|money_ar }}</p>
-  </article>
-  <article class="kpi-card">
-    <h4>Total gastos (filtrado)</h4>
-    <p>$ {{ expense_total|money_ar }}</p>
-  </article>
-  <article class="kpi-card">
-    <h4>Total ingresos del mes</h4>
-    <p>$ {{ income_total|money_ar }}</p>
-  </article>
 </section>
 
 <section class="main-grid">
@@ -56,7 +36,7 @@
           {% if day.in_month %}
             <div class="mini-day">{{ day.date.day }}</div>
             <div class="mini-num {% if day.interes|default_if_none:0 >= 0 %}pos{% else %}neg{% endif %}">
-              $ {{ day.interes|money_compact_ar }}
+              {% if day.interes == None %}—{% else %}$ {{ day.interes|money_compact_ar }}{% endif %}
             </div>
             <div class="mini-sub">Interés día</div>
           {% endif %}
@@ -71,11 +51,29 @@
     <div class="chart-wrap">
       <canvas id="chartInteresMes"></canvas>
     </div>
+    <div class="chart-kpi-grid">
+      <article class="kpi-card">
+        <h4>Total rendimientos del mes — {{ month_name }} {{ selected_year }}</h4>
+        <p>$ {{ total_mes|money_ar }}</p>
+      </article>
+      <article class="kpi-card">
+        <h4>Total rendimientos anual — {{ selected_year }}</h4>
+        <p>$ {{ total_anual|money_ar }}</p>
+      </article>
+    </div>
   </div>
 </section>
 
 <section class="panel">
   <h3>🧾 Bolsas de gastos</h3>
+  <form method="get" class="filter-grid filter-grid--expense">
+    <input type="hidden" name="year" value="{{ selected_year }}">
+    <input type="hidden" name="month" value="{{ selected_month }}">
+    <div class="form-row">{{ expense_filter_form.provider.label_tag }}{{ expense_filter_form.provider }}</div>
+    <div class="form-row">{{ expense_filter_form.payment_date.label_tag }}{{ expense_filter_form.payment_date }}</div>
+    <button class="btn-primary" type="submit">Filtrar gastos</button>
+  </form>
+  <p class="section-meta">Total gastos (filtrado): <strong>$ {{ expense_total|money_ar }}</strong></p>
   <div class="table-wrap">
     <table>
       <thead>
@@ -108,48 +106,6 @@
       </tbody>
     </table>
   </div>
-</section>
-
-<section class="double-grid">
-  <article class="panel">
-    <h3>Ingresos diarios del mes</h3>
-    <div class="table-wrap short">
-      <table>
-        <thead><tr><th>Fecha</th><th>Monto</th><th></th></tr></thead>
-        <tbody>
-          {% for inc in income_rows %}
-            <tr>
-              <td>{{ inc.entry_date|date:'d/m/Y' }}</td>
-              <td>$ {{ inc.amount|money_ar }}</td>
-              <td>{% if perms.dashboard.change_incomeentry %}<a href="{% url 'dashboard:income_edit' inc.id %}">Editar</a>{% endif %}</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="3">No hay ingresos cargados.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </article>
-
-  <article class="panel">
-    <h3>Proyección diaria del mes</h3>
-    <div class="table-wrap short">
-      <table>
-        <thead><tr><th>Fecha</th><th>Interés diario</th><th>Total</th></tr></thead>
-        <tbody>
-          {% for row in month_rows %}
-            <tr>
-              <td>{{ row.fecha|date:'d/m/Y' }}</td>
-              <td>$ {{ row.interes_diario|money_ar }}</td>
-              <td>$ {{ row.total|money_ar }}</td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="3">Sin proyección para el mes seleccionado.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </article>
 </section>
 
 <section class="panel">
@@ -218,6 +174,13 @@
   const labels = JSON.parse(document.getElementById('chart-labels').textContent);
   const values = JSON.parse(document.getElementById('chart-values').textContent);
   renderInteresChart('chartInteresMes', labels, values);
+
+  const periodForm = document.getElementById('periodFilterForm');
+  if (periodForm) {
+    periodForm.querySelectorAll('select, input').forEach((el) => {
+      el.addEventListener('change', () => periodForm.submit());
+    });
+  }
 </script>
 {% endif %}
 {% endblock %}

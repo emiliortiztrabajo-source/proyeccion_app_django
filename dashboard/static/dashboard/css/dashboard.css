@@ -30,6 +30,8 @@ body {
 
 .dashboard-head h2 { margin: 0 0 12px; }
 .filter-grid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; align-items: end; }
+.filter-grid--period { grid-template-columns: repeat(2, minmax(180px, 220px)); }
+.filter-grid--expense { grid-template-columns: minmax(220px, 1.2fr) minmax(180px, .9fr) auto; margin-bottom: 12px; }
 .form-row { display: flex; flex-direction: column; gap: 5px; }
 label { font-size: 12px; opacity: .85; }
 input, select {
@@ -48,6 +50,8 @@ input, select {
 .kpi-card { border: 1px solid rgba(255,255,255,.1); border-radius: 14px; padding: 12px; background: rgba(255,255,255,.02); }
 .kpi-card h4 { margin: 0; font-size: 12px; opacity: .8; }
 .kpi-card p { margin: 8px 0 0; font-size: 24px; font-weight: 800; }
+.chart-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.section-meta { margin: 0 0 10px; font-size: 13px; opacity: .9; }
 
 .main-grid { display: grid; grid-template-columns: 1.1fr 1.9fr; gap: 16px; margin-bottom: 16px; }
 .double-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -98,6 +102,8 @@ th { background: rgba(15, 23, 42, .8); position: sticky; top: 0; }
 
 @media (max-width: 1100px) {
   .filter-grid, .kpi-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .filter-grid--period, .filter-grid--expense { grid-template-columns: 1fr; }
   .main-grid, .double-grid { grid-template-columns: 1fr; }
+  .chart-kpi-grid { grid-template-columns: 1fr; }
   .chart-wrap { height: 300px; }
 }

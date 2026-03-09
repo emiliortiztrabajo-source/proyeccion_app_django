@@ -1,5 +1,4 @@
-from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 
@@ -7,7 +6,7 @@ import pandas as pd
 from django.db import transaction
 
 from dashboard.models import DailyProjection, Expense, IncomeEntry, PaymentDayRule, Provider, Scenario
-from dashboard.services.parsing import DIAS_COL_ES, extract_rate_from_label, list_escenario_cols, month_amount_col, parse_header_fecha, parse_monto
+from dashboard.services.parsing import DIAS_COL_ES, MONTH_ABBR_ES, extract_rate_from_label, month_amount_col, parse_monto
 
 
 SHEET_MAIN = "ESCENARIO 1"
@@ -19,7 +18,7 @@ CONCEPT_CAJA_BASE = "CAJA INICIAL"
 CONCEPT_GASTOS = "GASTOS PROYECTADOS"
 CONCEPT_INGRESOS = "INGRESOS FINANCIEROS PROYECTADOS"
 CONCEPT_RESCATE = "RESCATE DE FCI"
-CONCEPT_INTERES = "INTERES DIARIO"
+CONCEPT_INTERES = "INTERES DIARIO (0.0967%)"
 CONCEPT_INVERSIONES = "INVERSIONES FCI"
 CONCEPT_INTERESES_ACUM = "INTERESES ACUMULADOS"
 CONCEPT_INTERESES_REC = "INTERESES RECUPERADO"
@@ -54,51 +53,64 @@ def _upsert_scenario(scenario_name: str, year: int, start_month: int, main_df: p
 
 def _import_daily_projections(excel_bytes: bytes, scenario: Scenario, year: int):
     df = _load_sheet(excel_bytes, SHEET_MAIN)
-    scenario_cols = list_escenario_cols(df)
-    if not scenario_cols:
-        raise ValueError("No se encontraron columnas de escenario en la hoja principal.")
-
-    scenario_col = scenario_cols[0]
     first_col = df.columns[0]
-    labels = df[first_col].astype(str).str.strip().str.upper()
+    labels = df[first_col].astype(str).map(_normalize_name)
 
-    date_cols = []
-    col_to_date = {}
-    for col in df.columns:
-        if col == scenario_col:
-            continue
-        parsed = parse_header_fecha(col, year)
-        if parsed:
-            date_cols.append(col)
-            col_to_date[col] = parsed
+    # Normalizamos headers para resolver columnas tipo "01-mar" sin depender de may/min.
+    normalized_col_map = {str(col).strip().lower(): col for col in df.columns}
 
-    if not date_cols:
-        raise ValueError("No se encontraron columnas de fecha en la hoja principal.")
-
-    def row_value(row_name, date_col):
-        row = df[labels == row_name]
+    def find_row(row_name):
+        normalized_name = _normalize_name(row_name)
+        row = df[labels == normalized_name]
         if row.empty:
             return None
-        return parse_monto(row.iloc[0][date_col])
+        return row.iloc[0]
+
+    def col_for_day(day: date):
+        month_abbr_es = MONTH_ABBR_ES.get(day.month, "").lower()
+        key = f"{day.day:02d}-{month_abbr_es}"
+        return normalized_col_map.get(key)
+
+    def row_day_value(row_data, day: date):
+        if row_data is None:
+            return None
+        day_col = col_for_day(day)
+        if not day_col:
+            return None
+        return parse_monto(row_data.get(day_col))
+
+    start = date(year, scenario.start_month, 1)
+    end = date(year, 12, 31)
+
+    row_caja = find_row(CONCEPT_CAJA_BASE)
+    row_gastos = find_row(CONCEPT_GASTOS)
+    row_ingresos = find_row(CONCEPT_INGRESOS)
+    row_rescate = find_row(CONCEPT_RESCATE)
+    row_interes = find_row(CONCEPT_INTERES)
+    row_inversiones = find_row(CONCEPT_INVERSIONES)
+    row_intereses_acum = find_row(CONCEPT_INTERESES_ACUM)
+    row_intereses_rec = find_row(CONCEPT_INTERESES_REC)
+    row_total = find_row(CONCEPT_TOTAL)
 
     records = []
-    for date_col in date_cols:
-        projection_date = col_to_date[date_col]
+    day = start
+    while day <= end:
         records.append(
             DailyProjection(
                 scenario=scenario,
-                projection_date=projection_date,
-                caja_inicial=row_value(CONCEPT_CAJA_BASE, date_col),
-                gastos_proyectados_excel=row_value(CONCEPT_GASTOS, date_col),
-                ingresos_financieros_excel=row_value(CONCEPT_INGRESOS, date_col),
-                rescate_fci=row_value(CONCEPT_RESCATE, date_col),
-                interes_diario_excel=row_value(CONCEPT_INTERES, date_col),
-                inversiones_fci=row_value(CONCEPT_INVERSIONES, date_col),
-                intereses_acumulados=row_value(CONCEPT_INTERESES_ACUM, date_col),
-                intereses_recuperado=row_value(CONCEPT_INTERESES_REC, date_col),
-                total_excel=row_value(CONCEPT_TOTAL, date_col),
+                projection_date=day,
+                caja_inicial=row_day_value(row_caja, day),
+                gastos_proyectados_excel=row_day_value(row_gastos, day),
+                ingresos_financieros_excel=row_day_value(row_ingresos, day),
+                rescate_fci=row_day_value(row_rescate, day),
+                interes_diario_excel=row_day_value(row_interes, day),
+                inversiones_fci=row_day_value(row_inversiones, day),
+                intereses_acumulados=row_day_value(row_intereses_acum, day),
+                intereses_recuperado=row_day_value(row_intereses_rec, day),
+                total_excel=row_day_value(row_total, day),
             )
         )
+        day += timedelta(days=1)
 
     DailyProjection.objects.bulk_create(records, batch_size=1000)
 

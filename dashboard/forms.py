@@ -22,14 +22,20 @@ MONTH_NAME_ES = {
 class DashboardFilterForm(forms.Form):
     year = forms.IntegerField(label="Año")
     month = forms.ChoiceField(label="Mes", choices=[])
-    provider = forms.ModelChoiceField(label="Proveedor", queryset=Provider.objects.none(), required=False)
-    payment_date = forms.DateField(label="Fecha de pago", required=False, widget=forms.DateInput(attrs={"type": "date"}))
 
-    def __init__(self, *args, year=2026, start_month=3, provider_queryset=None, **kwargs):
+    def __init__(self, *args, year=2026, start_month=3, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["month"].choices = [(m, MONTH_NAME_ES[m]) for m in range(start_month, 13)]
         self.fields["year"].initial = year
         self.fields["month"].initial = start_month
+
+
+class ExpenseFilterForm(forms.Form):
+    provider = forms.ModelChoiceField(label="Proveedor", queryset=Provider.objects.none(), required=False)
+    payment_date = forms.DateField(label="Fecha de pago", required=False, widget=forms.DateInput(attrs={"type": "date"}))
+
+    def __init__(self, *args, provider_queryset=None, **kwargs):
+        super().__init__(*args, **kwargs)
         self.fields["provider"].queryset = provider_queryset if provider_queryset is not None else Provider.objects.all()
 
 
