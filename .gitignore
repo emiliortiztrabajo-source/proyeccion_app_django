@@ -1,0 +1,19 @@
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+db.sqlite3
+*.log
+staticfiles/
+.env
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Python packaging artifacts
+*.egg-info/
+build/
+dist/
