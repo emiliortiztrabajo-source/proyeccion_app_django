@@ -1,15 +1,17 @@
 {% extends 'base.html' %}
 
-{% block title %}Editar gasto{% endblock %}
+{% block title %}{{ title|default:'Editar gasto' }}{% endblock %}
 
 {% block content %}
 <section class="panel panel-narrow">
-  <h2>Editar gasto</h2>
+  <h2>{{ title|default:'Editar gasto' }}</h2>
+  {% if expense %}
   <p>{{ expense.provider.name }} · {{ expense.year }}/{{ expense.month }}</p>
+  {% endif %}
   <form method="post" class="card-form">
     {% csrf_token %}
     {{ form.as_p }}
-    <button type="submit" class="btn-primary">Guardar cambios</button>
+    <button type="submit" class="btn-primary">{% if is_create %}Guardar gasto{% else %}Guardar cambios{% endif %}</button>
     <a href="{% url 'dashboard:home' %}" class="btn-secondary">Cancelar</a>
   </form>
 </section>

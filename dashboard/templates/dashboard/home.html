@@ -20,6 +20,8 @@
     <div class="form-row">{{ period_form.month.label_tag }}{{ period_form.month }}</div>
     {% if request.GET.provider %}<input type="hidden" name="provider" value="{{ request.GET.provider }}">{% endif %}
     {% if request.GET.payment_date %}<input type="hidden" name="payment_date" value="{{ request.GET.payment_date }}">{% endif %}
+    {% if cafci_selected_start %}<input type="hidden" name="start_date" value="{{ cafci_selected_start|date:'Y-m-d' }}">{% endif %}
+    {% if cafci_selected_end %}<input type="hidden" name="end_date" value="{{ cafci_selected_end|date:'Y-m-d' }}">{% endif %}
   </form>
 </section>
 
@@ -64,47 +66,241 @@
   </div>
 </section>
 
-<section class="panel">
-  <h3>🧾 Bolsas de gastos</h3>
-  <form method="get" class="filter-grid filter-grid--expense">
+<section class="panel panel-collapsible" id="expensePanel" data-panel-name="expense">
+  <div class="panel-title-row">
+    <h3>🧾 Bolsas de gastos</h3>
+    <div class="panel-actions">
+      {% if perms.dashboard.add_expense %}
+      <a
+        href="{% url 'dashboard:expense_create' %}?year={{ selected_year }}&month={{ selected_month }}{% if request.GET.provider %}&provider={{ request.GET.provider }}{% endif %}{% if request.GET.payment_date %}&payment_date={{ request.GET.payment_date }}{% endif %}"
+        class="btn-primary"
+      >
+        Agregar gasto
+      </a>
+      <a
+        href="{% url 'dashboard:expense_import_excel' %}?year={{ selected_year }}&month={{ selected_month }}{% if request.GET.provider %}&provider={{ request.GET.provider }}{% endif %}{% if request.GET.payment_date %}&payment_date={{ request.GET.payment_date }}{% endif %}"
+        class="btn-secondary"
+      >
+        Importar gastos
+      </a>
+      {% endif %}
+      <a
+        href="{% url 'dashboard:expense_export_excel' %}?year={{ selected_year }}&month={{ selected_month }}{% if request.GET.provider %}&provider={{ request.GET.provider }}{% endif %}{% if request.GET.payment_date %}&payment_date={{ request.GET.payment_date }}{% endif %}"
+        class="btn-secondary"
+      >
+        Exportar gastos
+      </a>
+      <button
+        id="toggleExpensePanel"
+        type="button"
+        class="btn-secondary btn-toggle-panel"
+        aria-controls="expensePanelContent"
+        aria-expanded="false"
+      >
+        Ver gastos
+      </button>
+    </div>
+  </div>
+
+  <div id="expensePanelContent" class="collapsible-body" hidden>
+    <form method="get" class="filter-grid filter-grid--expense">
+      <input type="hidden" name="year" value="{{ selected_year }}">
+      <input type="hidden" name="month" value="{{ selected_month }}">
+      {% if cafci_selected_start %}<input type="hidden" name="start_date" value="{{ cafci_selected_start|date:'Y-m-d' }}">{% endif %}
+      {% if cafci_selected_end %}<input type="hidden" name="end_date" value="{{ cafci_selected_end|date:'Y-m-d' }}">{% endif %}
+      <div class="form-row">{{ expense_filter_form.provider.label_tag }}{{ expense_filter_form.provider }}</div>
+      <div class="form-row">{{ expense_filter_form.payment_date.label_tag }}{{ expense_filter_form.payment_date }}</div>
+      <button class="btn-primary" type="submit">Filtrar gastos</button>
+    </form>
+    <p class="section-meta">Total gastos (filtrado): <strong>$ {{ expense_total|money_ar }}</strong></p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>PAGO DIA</th>
+            <th>Proveedor</th>
+            <th>Nueva Clasificación</th>
+            <th>Origen</th>
+            <th>Monto</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for exp in expense_rows %}
+            <tr>
+              <td>{{ exp.payment_date|date:'d/m/Y'|default:'—' }}</td>
+              <td>{{ exp.payment_label }}</td>
+              <td>{{ exp.provider.name }}</td>
+              <td>{{ exp.nueva_clasificacion|default:'—' }}</td>
+              <td>{{ exp.source_tag|default:'—' }}</td>
+              <td>$ {{ exp.amount|money_ar }}</td>
+              <td>
+                {% if perms.dashboard.change_expense %}
+                  <a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="7">No hay gastos para los filtros seleccionados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="panel panel-cafci">
+  <div class="panel-title-row">
+    <h3>Datos externos FCI - API CAFCI</h3>
+    <div class="panel-actions">
+      <p class="section-meta section-meta--inline">Fuente principal: https://api.cafci.org.ar/</p>
+      <button
+        id="toggleCafciPanel"
+        type="button"
+        class="btn-secondary btn-toggle-panel"
+        aria-controls="cafciPanelContent"
+        aria-expanded="true"
+      >
+        Ocultar datos externos
+      </button>
+    </div>
+  </div>
+
+  <div id="cafciPanelContent" class="collapsible-body">
+
+  <form method="get" class="filter-grid filter-grid--cafci">
     <input type="hidden" name="year" value="{{ selected_year }}">
     <input type="hidden" name="month" value="{{ selected_month }}">
-    <div class="form-row">{{ expense_filter_form.provider.label_tag }}{{ expense_filter_form.provider }}</div>
-    <div class="form-row">{{ expense_filter_form.payment_date.label_tag }}{{ expense_filter_form.payment_date }}</div>
-    <button class="btn-primary" type="submit">Filtrar gastos</button>
+    {% if request.GET.provider %}<input type="hidden" name="provider" value="{{ request.GET.provider }}">{% endif %}
+    {% if request.GET.payment_date %}<input type="hidden" name="payment_date" value="{{ request.GET.payment_date }}">{% endif %}
+    <div class="form-row">
+      {{ cafci_lookup_form.start_date.label_tag }}
+      {{ cafci_lookup_form.start_date }}
+    </div>
+    <div class="form-row">
+      {{ cafci_lookup_form.end_date.label_tag }}
+      {{ cafci_lookup_form.end_date }}
+    </div>
+    <button class="btn-primary" type="submit">Consultar CAFCI</button>
   </form>
-  <p class="section-meta">Total gastos (filtrado): <strong>$ {{ expense_total|money_ar }}</strong></p>
-  <div class="table-wrap">
+
+  {% if cafci_error %}
+    <div class="msg error">No se pudo obtener datos de CAFCI: {{ cafci_error }}</div>
+  {% endif %}
+
+  {% if cafci_local_updated_at %}
+    <p class="section-meta">Ultima actualizacion local: <strong>{{ cafci_local_updated_at|date:'d/m/Y H:i:s' }}</strong></p>
+  {% endif %}
+
+  <div class="kpi-grid">
+    <article class="kpi-card">
+      <h4>Fondo</h4>
+      <p>{{ cafci_selected_fund|default:'-' }}</p>
+    </article>
+    <article class="kpi-card">
+      <h4>Clase</h4>
+      <p>{{ cafci_selected_class|default:'-' }}</p>
+    </article>
+    <article class="kpi-card">
+      <h4>Rendimiento diario actual</h4>
+      <p>{% if cafci_ficha and cafci_ficha.dailyReturn != None %}{{ cafci_ficha.dailyReturn|floatformat:6 }}%{% else %}-{% endif %}</p>
+    </article>
+    <article class="kpi-card">
+      <h4>Fecha del dato diario</h4>
+      <p>{% if cafci_ficha and cafci_ficha.dailyDate %}{{ cafci_ficha.dailyDate|date:'d/m/Y' }}{% else %}-{% endif %}</p>
+    </article>
+  </div>
+
+  <div class="chart-kpi-grid">
+    <article class="kpi-card">
+      <h4>Cuotaparte actual</h4>
+      <p>{% if cafci_ficha and cafci_ficha.cuotaparte != None %}$ {{ cafci_ficha.cuotaparte|money_ar }}{% else %}-{% endif %}</p>
+    </article>
+    <article class="kpi-card">
+      <h4>Rendimiento entre fechas</h4>
+      <p>{% if cafci_performance and cafci_performance.rendimiento != None %}{{ cafci_performance.rendimiento|floatformat:6 }}%{% else %}-{% endif %}</p>
+    </article>
+  </div>
+
+  <p class="section-meta">Rango consultado: <strong>{{ cafci_selected_start|date:'d/m/Y' }}</strong> a <strong>{{ cafci_selected_end|date:'d/m/Y' }}</strong></p>
+  {% if cafci_ficha and cafci_ficha.lastUpdate %}
+    <p class="section-meta">Fecha de ultima actualizacion en ficha: <strong>{{ cafci_ficha.lastUpdate|date:'d/m/Y' }}</strong></p>
+  {% endif %}
+  {% if cafci_source_ficha %}
+    <p class="section-meta">Endpoint ficha: <code>{{ cafci_source_ficha }}</code></p>
+  {% endif %}
+  {% if cafci_source_performance %}
+    <p class="section-meta">Endpoint rendimiento: <code>{{ cafci_source_performance }}</code></p>
+  {% endif %}
+
+  <h4 class="cafci-subtitle">Otros rendimientos utiles (ficha diaria)</h4>
+  <div class="table-wrap short">
+    <table>
+      <thead>
+        <tr>
+          <th>Periodo</th>
+          <th>Fecha</th>
+          <th>Rendimiento</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in cafci_other_returns %}
+          <tr>
+            <td>{{ item.periodo|default:'-' }}</td>
+            <td>{{ item.fecha|date:'d/m/Y'|default:'-' }}</td>
+            <td>{% if item.rendimiento == None %}-{% else %}{{ item.rendimiento|floatformat:6 }}%{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3">No se encontraron otros rendimientos en <code>data.info.diaria.rendimientos</code>.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="cafci-subtitle">Informacion diaria relevante (data.info.diaria)</h4>
+  <div class="table-wrap short">
+    <table>
+      <thead>
+        <tr>
+          <th>Campo</th>
+          <th>Valor</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in cafci_daily_info_items %}
+          <tr>
+            <td>{{ item.campo }}</td>
+            <td>{{ item.valor }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="2">No hay datos diarios parseados para mostrar.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="cafci-subtitle">Serie de rendimiento entre fechas</h4>
+  <div class="table-wrap short">
     <table>
       <thead>
         <tr>
           <th>Fecha</th>
-          <th>PAGO DIA</th>
-          <th>Proveedor</th>
-          <th>Nueva Clasificación</th>
-          <th>Monto</th>
-          <th></th>
+          <th>Valor</th>
         </tr>
       </thead>
       <tbody>
-        {% for exp in expense_rows %}
+        {% for row in cafci_performance_series %}
           <tr>
-            <td>{{ exp.payment_date|date:'d/m/Y'|default:'—' }}</td>
-            <td>{{ exp.payment_label }}</td>
-            <td>{{ exp.provider.name }}</td>
-            <td>{{ exp.nueva_clasificacion|default:'—' }}</td>
-            <td>$ {{ exp.amount|money_ar }}</td>
-            <td>
-              {% if perms.dashboard.change_expense %}
-                <a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a>
-              {% endif %}
-            </td>
+            <td>{{ row.fecha|date:'d/m/Y'|default:'-' }}</td>
+            <td>{% if row.valor == None %}-{% else %}{{ row.valor|floatformat:6 }}%{% endif %}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="6">No hay gastos para los filtros seleccionados.</td></tr>
+          <tr><td colspan="2">El endpoint de rendimiento no devolvio una serie detallada para el rango consultado.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+  </div>
   </div>
 </section>
 
@@ -177,6 +373,47 @@
 {{ chart_values|json_script:"chart-values" }}
 {{ calc_expense_options|json_script:"calc-expense-options" }}
 <script>
+  // Fallback local para asegurar el toggle aunque haya cache de static JS.
+  (function bindExpenseToggle() {
+    const toggleButton = document.getElementById('toggleExpensePanel');
+    const panelContent = document.getElementById('expensePanelContent');
+    if (!toggleButton || !panelContent) return;
+    if (toggleButton.dataset.boundToggle === '1') return;
+
+    const setExpanded = (expanded) => {
+      toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      toggleButton.textContent = expanded ? 'Ocultar gastos' : 'Ver gastos';
+      panelContent.hidden = !expanded;
+    };
+
+    setExpanded(false);
+    toggleButton.dataset.boundToggle = '1';
+    toggleButton.addEventListener('click', () => {
+      const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
+      setExpanded(!isExpanded);
+    });
+  })();
+
+  (function bindCafciToggle() {
+    const toggleButton = document.getElementById('toggleCafciPanel');
+    const panelContent = document.getElementById('cafciPanelContent');
+    if (!toggleButton || !panelContent) return;
+    if (toggleButton.dataset.boundToggle === '1') return;
+
+    const setExpanded = (expanded) => {
+      toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      toggleButton.textContent = expanded ? 'Ocultar datos externos' : 'Ver datos externos';
+      panelContent.hidden = !expanded;
+    };
+
+    setExpanded(true);
+    toggleButton.dataset.boundToggle = '1';
+    toggleButton.addEventListener('click', () => {
+      const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
+      setExpanded(!isExpanded);
+    });
+  })();
+
   const labels = JSON.parse(document.getElementById('chart-labels').textContent);
   const values = JSON.parse(document.getElementById('chart-values').textContent);
   renderInteresChart('chartInteresMes', labels, values);
@@ -190,6 +427,13 @@
     periodForm.querySelectorAll('select, input').forEach((el) => {
       el.addEventListener('change', () => periodForm.submit());
     });
+  }
+
+  if (typeof initExpensePanelToggle === 'function') {
+    initExpensePanelToggle();
+  }
+  if (typeof initCafciPanelToggle === 'function') {
+    initCafciPanelToggle();
   }
 </script>
 {% endif %}

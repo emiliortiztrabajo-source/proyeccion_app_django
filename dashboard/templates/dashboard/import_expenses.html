@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+
+{% block title %}Importar gastos{% endblock %}
+
+{% block content %}
+<section class="panel panel-narrow">
+  <h2>Importar gastos desde Excel</h2>
+  <p>Subí un archivo con el mismo formato que genera <strong>Exportar gastos</strong>.</p>
+
+  <form method="post" enctype="multipart/form-data" class="card-form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn-primary">Procesar importación</button>
+    <a href="{% url 'dashboard:home' %}{% if back_query %}?{{ back_query }}{% endif %}" class="btn-secondary">Volver al dashboard</a>
+  </form>
+
+  {% if result %}
+  <hr>
+  <h3>Resumen</h3>
+  <p>Filas procesadas: <strong>{{ result.processed }}</strong></p>
+  <p>Filas importadas correctamente: <strong>{{ result.created|add:result.updated }}</strong></p>
+  <p>Nuevas: <strong>{{ result.created }}</strong></p>
+  <p>Actualizadas: <strong>{{ result.updated }}</strong></p>
+  <p>Con error: <strong>{{ result.errors|length }}</strong></p>
+
+  {% if result.errors %}
+  <div class="table-wrap short">
+    <table>
+      <thead>
+        <tr><th>Errores por fila</th></tr>
+      </thead>
+      <tbody>
+        {% for err in result.errors %}
+          <tr><td>{{ err }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}
