@@ -8,9 +8,10 @@ from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
-from .forms import CafciLookupForm, DashboardFilterForm, ExcelImportForm, ExpenseExcelImportForm, ExpenseFilterForm, ExpenseForm, IncomeEntryForm, ManualExpenseForm
-from .models import Expense, IncomeEntry, Provider, Scenario
+from .forms import DashboardFilterForm, ExcelImportForm, ExpenseExcelImportForm, ExpenseFilterForm, ExpenseForm, IncomeEntryForm, ManualExpenseForm
+from .models import Expense, ExpenseChangeLog, IncomeEntry, Provider, Scenario
 from .services.cafci_api import CafciApiError, build_cafci_snapshot
 from .services.expense_excel_io import export_expenses_to_excel, import_expenses_from_excel
 from .services.dashboard_logic import (
@@ -24,8 +25,9 @@ from .services.parsing import MONTH_NAME_ES
 from .services.excel_importer import import_excel_bytes
 
 
-CAFCI_FUND_ID = "211"
-CAFCI_FUND_CLASS = "211"
+CAFCI_FUND_ID = "3764"
+CAFCI_FUND_CLASS = "3764"
+CAFCI_FUND_NAME = "1822 Raices Gestion"
 
 
 def _sum_interest(rows):
@@ -36,63 +38,80 @@ def _sum_interest(rows):
 	return total
 
 
+def _format_expense_value(field, value):
+	if field == "provider":
+		return value.name if value else "—"
+	if field == "payment_date":
+		return value.isoformat() if value else "—"
+	if field == "amount":
+		return f"{value:.2f}" if value is not None else "—"
+	return str(value) if value not in (None, "") else "—"
+
+
+def _build_expense_update_summary(before_expense, after_expense):
+	tracked_fields = [
+		("provider", "Proveedor"),
+		("payment_date", "Fecha"),
+		("payment_label", "PAGO DIA"),
+		("amount", "Monto"),
+		("nueva_clasificacion", "Nueva clasificación"),
+		("clasif_cash", "Clasif. cash"),
+		("financial_code", "Cod. financiero"),
+		("purchase_order", "OC"),
+		("source_tag", "Origen"),
+	]
+
+	changes = []
+	for field_name, label in tracked_fields:
+		before_value = getattr(before_expense, field_name)
+		after_value = getattr(after_expense, field_name)
+		if before_value != after_value:
+			changes.append(
+				f"{label}: {_format_expense_value(field_name, before_value)} -> {_format_expense_value(field_name, after_value)}"
+			)
+
+	return "; ".join(changes) if changes else "Sin cambios de datos."
+
+
+def _log_expense_change(*, request, expense, action, comment, change_summary):
+	ExpenseChangeLog.objects.create(
+		scenario=expense.scenario,
+		expense=expense,
+		action=action,
+		comment=comment,
+		change_summary=change_summary,
+		changed_by=request.user if request.user.is_authenticated else None,
+	)
+
+
 def _build_cafci_context(request):
 	today = date.today()
-	default_start = today - timedelta(days=30)
 	basic_context = {
-		"cafci_lookup_form": CafciLookupForm(request.GET or None),
 		"cafci_ficha": None,
-		"cafci_performance": None,
 		"cafci_error": None,
 		"cafci_local_updated_at": None,
 		"cafci_source_ficha": None,
-		"cafci_source_performance": None,
 		"cafci_daily_info_items": [],
-		"cafci_other_returns": [],
-		"cafci_performance_series": [],
 		"cafci_selected_fund": CAFCI_FUND_ID,
 		"cafci_selected_class": CAFCI_FUND_CLASS,
-		"cafci_selected_start": default_start,
-		"cafci_selected_end": today,
+		"cafci_target_name": CAFCI_FUND_NAME,
 	}
-
-	lookup_form = basic_context["cafci_lookup_form"]
-	fund = CAFCI_FUND_ID
-	fund_class = CAFCI_FUND_CLASS
-	start_date = default_start
-	end_date = today
-	if lookup_form.is_valid():
-		start_date = lookup_form.cleaned_data.get("start_date") or default_start
-		end_date = lookup_form.cleaned_data.get("end_date") or today
-
-	basic_context.update(
-		{
-			"cafci_selected_fund": fund,
-			"cafci_selected_class": fund_class,
-			"cafci_selected_start": start_date,
-			"cafci_selected_end": end_date,
-		}
-	)
 
 	try:
 		snapshot = build_cafci_snapshot(
-			fund=fund,
-			fund_class=fund_class,
-			start_date=start_date,
-			end_date=end_date,
+			fund=CAFCI_FUND_ID,
+			fund_class=CAFCI_FUND_CLASS,
+			fund_name=CAFCI_FUND_NAME,
+			start_date=today,
+			end_date=today,
 		)
 		ficha = snapshot.get("ficha") or {}
-		performance = snapshot.get("performance") or {}
 
 		basic_context.update(
 			{
 				"cafci_ficha": ficha,
-				"cafci_performance": performance,
 				"cafci_daily_info_items": ficha.get("dailyInfoItems") or [],
-				"cafci_other_returns": ficha.get("otherReturns") or [],
-				"cafci_performance_series": performance.get("series") or [],
 				"cafci_source_ficha": ficha.get("source"),
-				"cafci_source_performance": performance.get("source"),
 				"cafci_local_updated_at": timezone.localtime(timezone.now()),
 			}
 		)
@@ -133,6 +152,24 @@ def dashboard_home(request):
 		selected_provider = expense_filter_form.cleaned_data.get("provider")
 		selected_payment_date = expense_filter_form.cleaned_data.get("payment_date")
 
+	requested_sort = request.GET.get("sort")
+	requested_dir = request.GET.get("dir", "asc")
+	allowed_sorts = {
+		"payment_date",
+		"payment_label",
+		"provider",
+		"nueva_clasificacion",
+		"source_tag",
+		"amount",
+	}
+	effective_sort = requested_sort if requested_sort in allowed_sorts else ""
+	effective_dir = "desc" if requested_dir == "desc" else "asc"
+
+	def _next_dir_for(field_name):
+		if effective_sort == field_name and effective_dir == "asc":
+			return "desc"
+		return "asc"
+
 	cash_rows = build_year_cash_projection(scenario=scenario, year=selected_year)
 	month_rows = [row for row in cash_rows if row["mes"] == selected_month]
 	monthly_summary = monthly_interest_summary(cash_rows, scenario.start_month)
@@ -144,7 +181,10 @@ def dashboard_home(request):
 		month=selected_month,
 		provider=selected_provider,
 		payment_date=selected_payment_date,
+		sort_field=effective_sort or None,
+		sort_dir=effective_dir,
 	)
+	expense_change_logs = scenario.expense_change_logs.select_related("changed_by", "expense", "expense__provider")[:120]
 
 	monthly_incomes = IncomeEntry.objects.filter(
 		scenario=scenario,
@@ -193,16 +233,33 @@ def dashboard_home(request):
 		"chart_values": chart_values,
 		"expense_rows": expense_qs[:250],
 		"expense_total": expense_total,
+		"expense_change_logs": expense_change_logs,
 		"income_rows": monthly_incomes[:250],
 		"income_total": income_total,
 		"total_mes": _sum_interest(month_rows),
 		"total_anual": _sum_interest(cash_rows),
 		"daily_rate_pct": float(scenario.daily_interest_rate * Decimal("100")),
-		"adelanto_daily_rate_decimal": "0.000967",
+		"adelanto_daily_rate_decimal": f"{scenario.daily_interest_rate:.6f}",
 		"calc_expense_options": calc_expense_options,
+		"expense_sort": effective_sort,
+		"expense_dir": effective_dir,
+		"next_dir_payment_date": _next_dir_for("payment_date"),
+		"next_dir_payment_label": _next_dir_for("payment_label"),
+		"next_dir_provider": _next_dir_for("provider"),
+		"next_dir_nueva_clasificacion": _next_dir_for("nueva_clasificacion"),
+		"next_dir_source_tag": _next_dir_for("source_tag"),
+		"next_dir_amount": _next_dir_for("amount"),
 		"today": date.today(),
 	}
 	context.update(_build_cafci_context(request))
+
+	cafci_ficha = context.get("cafci_ficha") or {}
+	cafci_daily_return_pct = cafci_ficha.get("dailyReturn")
+	if cafci_daily_return_pct is not None:
+		rate_decimal = (Decimal(cafci_daily_return_pct) / Decimal("100"))
+		context["daily_rate_pct"] = float(Decimal(cafci_daily_return_pct))
+		context["adelanto_daily_rate_decimal"] = f"{rate_decimal:.10f}".rstrip("0").rstrip(".")
+
 	return render(request, "dashboard/home.html", context)
 
 
@@ -218,15 +275,59 @@ def expense_list(request):
 def expense_edit(request, pk):
 	expense = get_object_or_404(Expense.objects.select_related("scenario"), pk=pk)
 	if request.method == "POST":
+		before_expense = Expense.objects.select_related("provider").get(pk=expense.pk)
 		form = ExpenseForm(request.POST, instance=expense)
 		if form.is_valid():
-			form.save()
+			expense = form.save()
+			comment = form.cleaned_data["change_comment"].strip()
+			summary = _build_expense_update_summary(before_expense, expense)
+			_log_expense_change(
+				request=request,
+				expense=expense,
+				action=ExpenseChangeLog.ACTION_UPDATE,
+				comment=comment,
+				change_summary=summary,
+			)
 			messages.success(request, "Gasto actualizado correctamente.")
 			return redirect("dashboard:home")
 	else:
 		form = ExpenseForm(instance=expense)
 
 	return render(request, "dashboard/expense_form.html", {"form": form, "expense": expense})
+
+
+@login_required
+@permission_required("dashboard.delete_expense", raise_exception=True)
+@require_POST
+def expense_delete(request, pk):
+	expense = get_object_or_404(Expense.objects.select_related("provider", "scenario"), pk=pk)
+	comment = (request.POST.get("change_comment") or "").strip()
+	if not comment:
+		messages.error(request, "Debés agregar un comentario para registrar la eliminación.")
+		next_url = request.POST.get("next") or reverse("dashboard:home")
+		if not next_url.startswith("/"):
+			next_url = reverse("dashboard:home")
+		return redirect(next_url)
+
+	summary = (
+		f"Eliminado gasto {expense.payment_label or '—'} | "
+		f"Proveedor: {_format_expense_value('provider', expense.provider)} | "
+		f"Fecha: {_format_expense_value('payment_date', expense.payment_date)} | "
+		f"Monto: {_format_expense_value('amount', expense.amount)}"
+	)
+	_log_expense_change(
+		request=request,
+		expense=expense,
+		action=ExpenseChangeLog.ACTION_DELETE,
+		comment=comment,
+		change_summary=summary,
+	)
+	expense.delete()
+	messages.success(request, "Gasto eliminado correctamente.")
+	next_url = request.POST.get("next") or reverse("dashboard:home")
+	if not next_url.startswith("/"):
+		next_url = reverse("dashboard:home")
+	return redirect(next_url)
 
 
 @login_required
@@ -244,6 +345,20 @@ def expense_create(request):
 			expense.scenario = scenario
 			expense.source_tag = form.cleaned_data.get("source_tag") or Expense.SOURCE_MANUAL
 			expense.save()
+			comment = form.cleaned_data["change_comment"].strip()
+			summary = (
+				f"Creado gasto {expense.payment_label or '—'} | "
+				f"Proveedor: {_format_expense_value('provider', expense.provider)} | "
+				f"Fecha: {_format_expense_value('payment_date', expense.payment_date)} | "
+				f"Monto: {_format_expense_value('amount', expense.amount)}"
+			)
+			_log_expense_change(
+				request=request,
+				expense=expense,
+				action=ExpenseChangeLog.ACTION_CREATE,
+				comment=comment,
+				change_summary=summary,
+			)
 			messages.success(request, "Gasto cargado correctamente.")
 			query = f"?year={expense.year}&month={expense.month}"
 			if expense.provider_id:

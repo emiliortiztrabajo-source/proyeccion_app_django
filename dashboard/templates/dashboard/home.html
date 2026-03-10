@@ -103,7 +103,7 @@
   </div>
 
   <div id="expensePanelContent" class="collapsible-body" hidden>
-    <form method="get" class="filter-grid filter-grid--expense">
+    <form method="get" action="#expensePanel" class="filter-grid filter-grid--expense">
       <input type="hidden" name="year" value="{{ selected_year }}">
       <input type="hidden" name="month" value="{{ selected_month }}">
       {% if cafci_selected_start %}<input type="hidden" name="start_date" value="{{ cafci_selected_start|date:'Y-m-d' }}">{% endif %}
@@ -117,12 +117,54 @@
       <table>
         <thead>
           <tr>
-            <th>Fecha</th>
-            <th>PAGO DIA</th>
-            <th>Proveedor</th>
-            <th>Nueva Clasificación</th>
-            <th>Origen</th>
-            <th>Monto</th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='payment_date' dir=next_dir_payment_date %}#expensePanel">
+                Fecha{% if expense_sort == 'payment_date' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'payment_date' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='payment_label' dir=next_dir_payment_label %}#expensePanel">
+                PAGO DIA{% if expense_sort == 'payment_label' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'payment_label' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='provider' dir=next_dir_provider %}#expensePanel">
+                Proveedor{% if expense_sort == 'provider' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'provider' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='nueva_clasificacion' dir=next_dir_nueva_clasificacion %}#expensePanel">
+                Nueva Clasificación{% if expense_sort == 'nueva_clasificacion' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'nueva_clasificacion' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='source_tag' dir=next_dir_source_tag %}#expensePanel">
+                Origen{% if expense_sort == 'source_tag' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'source_tag' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='amount' dir=next_dir_amount %}#expensePanel">
+                Monto{% if expense_sort == 'amount' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'amount' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
             <th></th>
           </tr>
         </thead>
@@ -136,9 +178,19 @@
               <td>{{ exp.source_tag|default:'—' }}</td>
               <td>$ {{ exp.amount|money_ar }}</td>
               <td>
-                {% if perms.dashboard.change_expense %}
-                  <a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a>
-                {% endif %}
+                <div class="row-actions">
+                  {% if perms.dashboard.change_expense %}
+                    <a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a>
+                  {% endif %}
+                  {% if perms.dashboard.delete_expense %}
+                    <form method="post" action="{% url 'dashboard:expense_delete' exp.id %}" class="inline-form change-comment-form" data-confirm-message="¿Eliminar este gasto?" data-comment-prompt="Comentario obligatorio para el historial de cambios (eliminación):">
+                      {% csrf_token %}
+                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                      <input type="hidden" name="change_comment" value="">
+                      <button type="submit" class="btn-link danger-link">Eliminar</button>
+                    </form>
+                  {% endif %}
+                </div>
               </td>
             </tr>
           {% empty %}
@@ -146,15 +198,68 @@
           {% endfor %}
         </tbody>
       </table>
+
+      <div class="panel-title-row" style="margin-top: 12px; margin-bottom: 8px;">
+        <h4 class="cafci-subtitle" style="margin: 0;">Historial de cambios</h4>
+        <div class="panel-actions">
+          <button
+            id="toggleHistoryPanel"
+            type="button"
+            class="btn-secondary btn-toggle-panel"
+            aria-controls="historyPanelContent"
+            aria-expanded="false"
+          >
+            Ver historial
+          </button>
+        </div>
+      </div>
+
+      <div id="historyPanelContent" class="collapsible-body" hidden>
+        <div class="table-wrap short">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Acción</th>
+                <th>Gasto</th>
+                <th>Usuario</th>
+                <th>Comentario</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for log in expense_change_logs %}
+                <tr>
+                  <td>{{ log.changed_at|date:'d/m/Y H:i' }}</td>
+                  <td>{{ log.get_action_display }}</td>
+                  <td>
+                    {% if log.expense %}
+                      {{ log.expense.payment_label|default:'—' }} · $ {{ log.expense.amount|money_ar }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td>{{ log.changed_by.username|default:'sistema' }}</td>
+                  <td>{{ log.comment|default:'—' }}</td>
+                  <td>{{ log.change_summary|default:'—' }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="6">Aún no hay cambios registrados.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
+
   </div>
 </section>
 
 <section class="panel panel-cafci">
   <div class="panel-title-row">
-    <h3>Datos externos FCI - API CAFCI</h3>
+    <h3>Datos FCI - Planilla diaria</h3>
     <div class="panel-actions">
-      <p class="section-meta section-meta--inline">Fuente principal: https://api.cafci.org.ar/</p>
+      <p class="section-meta section-meta--inline">Fuente principal: https://api.pub.cafci.org.ar/pb_get</p>
       <button
         id="toggleCafciPanel"
         type="button"
@@ -169,22 +274,6 @@
 
   <div id="cafciPanelContent" class="collapsible-body">
 
-  <form method="get" class="filter-grid filter-grid--cafci">
-    <input type="hidden" name="year" value="{{ selected_year }}">
-    <input type="hidden" name="month" value="{{ selected_month }}">
-    {% if request.GET.provider %}<input type="hidden" name="provider" value="{{ request.GET.provider }}">{% endif %}
-    {% if request.GET.payment_date %}<input type="hidden" name="payment_date" value="{{ request.GET.payment_date }}">{% endif %}
-    <div class="form-row">
-      {{ cafci_lookup_form.start_date.label_tag }}
-      {{ cafci_lookup_form.start_date }}
-    </div>
-    <div class="form-row">
-      {{ cafci_lookup_form.end_date.label_tag }}
-      {{ cafci_lookup_form.end_date }}
-    </div>
-    <button class="btn-primary" type="submit">Consultar CAFCI</button>
-  </form>
-
   {% if cafci_error %}
     <div class="msg error">No se pudo obtener datos de CAFCI: {{ cafci_error }}</div>
   {% endif %}
@@ -193,14 +282,27 @@
     <p class="section-meta">Ultima actualizacion local: <strong>{{ cafci_local_updated_at|date:'d/m/Y H:i:s' }}</strong></p>
   {% endif %}
 
+  <p class="section-meta">
+    Fondo encontrado en Excel diario:
+    <strong>{{ cafci_ficha.fundName|default:'No encontrado' }}</strong>
+  </p>
+
+  <p class="section-meta">
+    Valores usados del Excel:
+    <strong>fondo={{ cafci_ficha.fundName|default:'-' }}</strong> |
+    <strong>cuotaparte_hoy={% if cafci_ficha.cuotaparte != None %}{{ cafci_ficha.cuotaparte|floatformat:3 }}{% else %}-{% endif %}</strong> |
+    <strong>cuotaparte_anterior={% if cafci_ficha.cuotapartePrevious != None %}{{ cafci_ficha.cuotapartePrevious|floatformat:3 }}{% else %}-{% endif %}</strong> |
+    <strong>rendimiento_diario={% if cafci_ficha.dailyReturn != None %}{{ cafci_ficha.dailyReturn|floatformat:9 }}%{% else %}-{% endif %}</strong>
+  </p>
+
   <div class="kpi-grid">
     <article class="kpi-card">
-      <h4>Fondo</h4>
-      <p>{{ cafci_selected_fund|default:'-' }}</p>
+      <h4>Fondo objetivo</h4>
+      <p>{{ cafci_target_name|default:'-' }}</p>
     </article>
     <article class="kpi-card">
-      <h4>Clase</h4>
-      <p>{{ cafci_selected_class|default:'-' }}</p>
+      <h4>Línea encontrada</h4>
+      <p>{{ cafci_ficha.fundName|default:'—' }}</p>
     </article>
     <article class="kpi-card">
       <h4>Rendimiento diario actual</h4>
@@ -218,47 +320,21 @@
       <p>{% if cafci_ficha and cafci_ficha.cuotaparte != None %}$ {{ cafci_ficha.cuotaparte|money_ar }}{% else %}-{% endif %}</p>
     </article>
     <article class="kpi-card">
-      <h4>Rendimiento entre fechas</h4>
-      <p>{% if cafci_performance and cafci_performance.rendimiento != None %}{{ cafci_performance.rendimiento|floatformat:6 }}%{% else %}-{% endif %}</p>
+      <h4>Cuotaparte anterior</h4>
+      <p>{% if cafci_ficha and cafci_ficha.cuotapartePrevious != None %}$ {{ cafci_ficha.cuotapartePrevious|money_ar }}{% else %}-{% endif %}</p>
     </article>
   </div>
 
-  <p class="section-meta">Rango consultado: <strong>{{ cafci_selected_start|date:'d/m/Y' }}</strong> a <strong>{{ cafci_selected_end|date:'d/m/Y' }}</strong></p>
+  <p class="section-meta">Fórmula aplicada: <strong>(cuotaparte_hoy - cuotaparte_anterior) / cuotaparte_anterior</strong></p>
+
   {% if cafci_ficha and cafci_ficha.lastUpdate %}
-    <p class="section-meta">Fecha de ultima actualizacion en ficha: <strong>{{ cafci_ficha.lastUpdate|date:'d/m/Y' }}</strong></p>
+    <p class="section-meta">Fecha de última actualización detectada en planilla: <strong>{{ cafci_ficha.lastUpdate|date:'d/m/Y' }}</strong></p>
   {% endif %}
   {% if cafci_source_ficha %}
-    <p class="section-meta">Endpoint ficha: <code>{{ cafci_source_ficha }}</code></p>
-  {% endif %}
-  {% if cafci_source_performance %}
-    <p class="section-meta">Endpoint rendimiento: <code>{{ cafci_source_performance }}</code></p>
+    <p class="section-meta">Origen de datos: <code>{{ cafci_source_ficha }}</code></p>
   {% endif %}
 
-  <h4 class="cafci-subtitle">Otros rendimientos utiles (ficha diaria)</h4>
-  <div class="table-wrap short">
-    <table>
-      <thead>
-        <tr>
-          <th>Periodo</th>
-          <th>Fecha</th>
-          <th>Rendimiento</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in cafci_other_returns %}
-          <tr>
-            <td>{{ item.periodo|default:'-' }}</td>
-            <td>{{ item.fecha|date:'d/m/Y'|default:'-' }}</td>
-            <td>{% if item.rendimiento == None %}-{% else %}{{ item.rendimiento|floatformat:6 }}%{% endif %}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="3">No se encontraron otros rendimientos en <code>data.info.diaria.rendimientos</code>.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <h4 class="cafci-subtitle">Informacion diaria relevante (data.info.diaria)</h4>
+  <h4 class="cafci-subtitle">Línea cargada desde la planilla</h4>
   <div class="table-wrap short">
     <table>
       <thead>
@@ -279,36 +355,21 @@
       </tbody>
     </table>
   </div>
-
-  <h4 class="cafci-subtitle">Serie de rendimiento entre fechas</h4>
-  <div class="table-wrap short">
-    <table>
-      <thead>
-        <tr>
-          <th>Fecha</th>
-          <th>Valor</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in cafci_performance_series %}
-          <tr>
-            <td>{{ row.fecha|date:'d/m/Y'|default:'-' }}</td>
-            <td>{% if row.valor == None %}-{% else %}{{ row.valor|floatformat:6 }}%{% endif %}</td>
-          </tr>
-        {% empty %}
-          <tr><td colspan="2">El endpoint de rendimiento no devolvio una serie detallada para el rango consultado.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
   </div>
 </section>
 
-<section class="panel">
-  <h3>🧮 Calculadoras</h3>
+<section class="panel panel-calculators">
+  <div class="panel-title-row">
+    <h3>🧮 Calculadoras</h3>
+    <p class="section-meta section-meta--inline">Herramientas de simulación rápida para decisión operativa.</p>
+  </div>
   <div class="double-grid">
-    <article class="calc-box">
+    <article class="calc-box calc-box--adelanto">
       <h4>⏩ Adelantar pago</h4>
+      <div class="form-row">
+        <label for="adelantoProveedorSearch">Buscar proveedor</label>
+        <input id="adelantoProveedorSearch" type="text" placeholder="Escribí nombre o CUIT del proveedor">
+      </div>
       <div class="form-row">
         <label for="adelantoProveedor">Proveedor</label>
         <select id="adelantoProveedor"></select>
@@ -332,12 +393,14 @@
           <option>Simple</option>
         </select>
       </div>
-      <p class="section-meta">Tasa diaria usada: <strong>0.0967%</strong></p>
-      <button type="button" class="btn-primary" data-rate-decimal="{{ adelanto_daily_rate_decimal }}" onclick="calcAdelantoFromButton(this)">Calcular</button>
+      <p class="section-meta section-meta--hint">Tasa diaria usada: <strong>{{ daily_rate_pct|floatformat:6 }}%</strong></p>
+      <div class="calc-actions">
+        <button type="button" class="btn-primary" data-rate-decimal="{{ adelanto_daily_rate_decimal }}" onclick="calcAdelantoFromButton(this)">Calcular</button>
+      </div>
       <div id="adelantoResultado" class="calc-result"></div>
     </article>
 
-    <article class="calc-box">
+    <article class="calc-box calc-box--fci">
       <h4>📈 Proyección rendimiento FCI</h4>
       <div class="form-row">
         <label for="fciCapital">Capital ($)</label>
@@ -358,7 +421,9 @@
           <option>Simple</option>
         </select>
       </div>
-      <button type="button" class="btn-primary" onclick="calcFCI()">Calcular</button>
+      <div class="calc-actions">
+        <button type="button" class="btn-primary" onclick="calcFCI()">Calcular</button>
+      </div>
       <div id="fciResultado" class="calc-result"></div>
     </article>
   </div>

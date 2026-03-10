@@ -99,6 +99,7 @@ function calcAdelantoFromButton(button) {
 }
 
 function initAdelantoCalculator(rawRows) {
+  const providerSearchEl = document.getElementById('adelantoProveedorSearch');
   const providerEl = document.getElementById('adelantoProveedor');
   const dateEl = document.getElementById('adelantoFechaPago');
   const paymentEl = document.getElementById('adelantoPago');
@@ -121,22 +122,51 @@ function initAdelantoCalculator(rawRows) {
   }
 
   const uniqueSorted = (values) => Array.from(new Set(values)).sort((a, b) => String(a).localeCompare(String(b), 'es'));
+  const allProviders = uniqueSorted(rows.map((r) => r.provider));
 
   const fillProviders = () => {
-    const providers = uniqueSorted(rows.map((r) => r.provider));
+    const searchText = String(providerSearchEl?.value || '').trim().toLowerCase();
+    const currentProvider = providerEl.value;
+    const providers = allProviders.filter((provider) => {
+      if (!searchText) return true;
+      return String(provider).toLowerCase().includes(searchText);
+    });
+
     providerEl.innerHTML = '';
+
+    if (!providers.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Sin coincidencias';
+      providerEl.appendChild(opt);
+      return;
+    }
+
     providers.forEach((provider) => {
       const opt = document.createElement('option');
       opt.value = provider;
       opt.textContent = provider;
       providerEl.appendChild(opt);
     });
+
+    if (currentProvider && providers.includes(currentProvider)) {
+      providerEl.value = currentProvider;
+    }
   };
 
   const fillDates = () => {
     const provider = providerEl.value;
     const dates = uniqueSorted(rows.filter((r) => r.provider === provider).map((r) => r.payment_date));
     dateEl.innerHTML = '';
+
+    if (!dates.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Sin fechas';
+      dateEl.appendChild(opt);
+      return;
+    }
+
     dates.forEach((d) => {
       const opt = document.createElement('option');
       opt.value = d;
@@ -149,10 +179,19 @@ function initAdelantoCalculator(rawRows) {
     const provider = providerEl.value;
     const paymentDate = dateEl.value;
     paymentEl.innerHTML = '';
-    rows
+    const paymentRows = rows
       .filter((r) => r.provider === provider && r.payment_date === paymentDate)
-      .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0))
-      .forEach((r) => {
+      .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
+
+    if (!paymentRows.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Sin pagos';
+      paymentEl.appendChild(opt);
+      return;
+    }
+
+    paymentRows.forEach((r) => {
         const opt = document.createElement('option');
         opt.value = String(r.id);
         opt.dataset.amount = String(Number(r.amount || 0));
@@ -180,6 +219,10 @@ function initAdelantoCalculator(rawRows) {
   };
 
   providerEl.addEventListener('change', rebuildFromProvider);
+  providerSearchEl?.addEventListener('input', () => {
+    fillProviders();
+    rebuildFromProvider();
+  });
   dateEl.addEventListener('change', rebuildFromDate);
   paymentEl.addEventListener('change', refreshDefaultDays);
 
@@ -224,13 +267,38 @@ function initExpensePanelToggle() {
   const panelContent = document.getElementById('expensePanelContent');
   if (!toggleButton || !panelContent) return;
 
+  const storageKey = 'expensePanelExpanded';
+  const params = new URLSearchParams(window.location.search);
+  const hasExpenseQuery = ['provider', 'payment_date', 'sort', 'dir'].some((key) => {
+    const value = params.get(key);
+    return value !== null && value !== '';
+  });
+
   const setExpanded = (expanded) => {
     toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     toggleButton.textContent = expanded ? 'Ocultar gastos' : 'Ver gastos';
     panelContent.hidden = !expanded;
+    try {
+      localStorage.setItem(storageKey, expanded ? '1' : '0');
+    } catch (_) {
+      // Ignore storage errors (private mode or blocked storage).
+    }
   };
 
-  setExpanded(false);
+  let savedExpanded = null;
+  try {
+    savedExpanded = localStorage.getItem(storageKey);
+  } catch (_) {
+    savedExpanded = null;
+  }
+
+  if (hasExpenseQuery) {
+    setExpanded(true);
+  } else if (savedExpanded === '1' || savedExpanded === '0') {
+    setExpanded(savedExpanded === '1');
+  } else {
+    setExpanded(false);
+  }
 
   toggleButton.addEventListener('click', () => {
     const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
@@ -245,7 +313,7 @@ function initCafciPanelToggle() {
 
   const setExpanded = (expanded) => {
     toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    toggleButton.textContent = expanded ? 'Ocultar datos externos' : 'Ver datos externos';
+    toggleButton.textContent = expanded ? 'Ocultar datos FCI' : 'Ver datos FCI';
     panelContent.hidden = !expanded;
   };
 
@@ -257,7 +325,119 @@ function initCafciPanelToggle() {
   });
 }
 
+function initHistoryPanelToggle() {
+  const toggleButton = document.getElementById('toggleHistoryPanel');
+  const panelContent = document.getElementById('historyPanelContent');
+  if (!toggleButton || !panelContent) return;
+
+  const setExpanded = (expanded) => {
+    toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggleButton.textContent = expanded ? 'Ocultar historial' : 'Ver historial';
+    panelContent.hidden = !expanded;
+  };
+
+  setExpanded(false);
+
+  toggleButton.addEventListener('click', () => {
+    const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
+    setExpanded(!isExpanded);
+  });
+}
+
+function initChangeCommentForms() {
+  const forms = document.querySelectorAll('form.change-comment-form');
+  forms.forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      const confirmMessage = form.dataset.confirmMessage || '¿Confirmás esta acción?';
+      if (!window.confirm(confirmMessage)) {
+        event.preventDefault();
+        return;
+      }
+
+      const commentInput = form.querySelector('input[name="change_comment"]');
+      if (!commentInput) return;
+
+      const promptText = form.dataset.commentPrompt || 'Ingresá un comentario para el historial de cambios:';
+      const userComment = window.prompt(promptText, commentInput.value || '');
+      if (userComment === null) {
+        event.preventDefault();
+        return;
+      }
+
+      const trimmed = userComment.trim();
+      if (!trimmed) {
+        window.alert('El comentario es obligatorio para registrar el cambio.');
+        event.preventDefault();
+        return;
+      }
+
+      commentInput.value = trimmed;
+    });
+  });
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function initExpenseProviderSearch() {
+  const providerSelect = document.getElementById('id_provider');
+  if (!providerSelect) return;
+
+  const formRow = providerSelect.closest('.form-row');
+  if (!formRow) return;
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.id = 'expenseProviderSearch';
+  searchInput.className = 'select-search-input';
+  searchInput.placeholder = 'Buscar proveedor en la lista';
+  searchInput.autocomplete = 'off';
+
+  formRow.insertBefore(searchInput, providerSelect);
+
+  const originalOptions = Array.from(providerSelect.options).map((opt) => ({
+    value: opt.value,
+    text: opt.textContent,
+  }));
+
+  const renderOptions = (query) => {
+    const normalizedQuery = normalizeSearchText(query).trim();
+    const previousValue = providerSelect.value;
+
+    providerSelect.innerHTML = '';
+
+    const visibleOptions = originalOptions.filter((opt, idx) => {
+      if (idx === 0 && opt.value === '') return true;
+      if (!normalizedQuery) return true;
+      return normalizeSearchText(opt.text).includes(normalizedQuery);
+    });
+
+    visibleOptions.forEach((opt) => {
+      const optionEl = document.createElement('option');
+      optionEl.value = opt.value;
+      optionEl.textContent = opt.text;
+      providerSelect.appendChild(optionEl);
+    });
+
+    const canRestoreValue = visibleOptions.some((opt) => opt.value === previousValue);
+    providerSelect.value = canRestoreValue ? previousValue : '';
+  };
+
+  searchInput.addEventListener('input', () => {
+    renderOptions(searchInput.value);
+  });
+
+  renderOptions('');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initExpensePanelToggle();
+  initHistoryPanelToggle();
   initCafciPanelToggle();
+  initChangeCommentForms();
+  initExpenseProviderSearch();
 });

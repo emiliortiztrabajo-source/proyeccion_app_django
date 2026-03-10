@@ -27,7 +27,21 @@
           <td>{{ exp.provider.name }}</td>
           <td>{{ exp.payment_label }}</td>
           <td>$ {{ exp.amount|money_ar }}</td>
-          <td><a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a></td>
+          <td>
+            <div class="row-actions">
+              {% if perms.dashboard.change_expense %}
+                <a href="{% url 'dashboard:expense_edit' exp.id %}">Editar</a>
+              {% endif %}
+              {% if perms.dashboard.delete_expense %}
+                <form method="post" action="{% url 'dashboard:expense_delete' exp.id %}" class="inline-form change-comment-form" data-confirm-message="¿Eliminar este gasto?" data-comment-prompt="Comentario obligatorio para el historial de cambios (eliminación):">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <input type="hidden" name="change_comment" value="">
+                  <button type="submit" class="btn-link danger-link">Eliminar</button>
+                </form>
+              {% endif %}
+            </div>
+          </td>
         </tr>
       {% empty %}
         <tr><td colspan="5">No hay gastos cargados.</td></tr>

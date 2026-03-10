@@ -116,3 +116,28 @@ class Expense(models.Model):
 
 	def __str__(self):
 		return f"{self.provider} - {self.amount}"
+
+
+class ExpenseChangeLog(models.Model):
+	ACTION_CREATE = "CREATE"
+	ACTION_UPDATE = "UPDATE"
+	ACTION_DELETE = "DELETE"
+	ACTION_CHOICES = (
+		(ACTION_CREATE, "Alta"),
+		(ACTION_UPDATE, "Edición"),
+		(ACTION_DELETE, "Eliminación"),
+	)
+
+	scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="expense_change_logs")
+	expense = models.ForeignKey(Expense, on_delete=models.SET_NULL, null=True, blank=True, related_name="change_logs")
+	action = models.CharField(max_length=12, choices=ACTION_CHOICES)
+	comment = models.TextField(blank=True)
+	change_summary = models.TextField(blank=True)
+	changed_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="expense_change_logs")
+	changed_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["-changed_at", "-id"]
+
+	def __str__(self):
+		return f"{self.get_action_display()} - {self.changed_at:%d/%m/%Y %H:%M}"

@@ -153,13 +153,27 @@ def get_month_calendar_payload(cash_rows, year: int, month: int):
     }
 
 
-def filtered_expenses(*, scenario, year, month, provider=None, payment_date=None):
+def filtered_expenses(*, scenario, year, month, provider=None, payment_date=None, sort_field=None, sort_dir="asc"):
     qs = Expense.objects.filter(scenario=scenario, year=year, month=month).select_related("provider")
     if provider:
         qs = qs.filter(provider=provider)
     if payment_date:
         qs = qs.filter(payment_date=payment_date)
-    qs = qs.order_by("payment_date", "-amount")
+
+    allowed_sort_fields = {
+        "payment_date": "payment_date",
+        "payment_label": "payment_label",
+        "provider": "provider__name",
+        "nueva_clasificacion": "nueva_clasificacion",
+        "source_tag": "source_tag",
+        "amount": "amount",
+    }
+    if not sort_field:
+        qs = qs.order_by("payment_date", "-amount", "id")
+    else:
+        effective_sort_field = allowed_sort_fields.get(sort_field, "payment_date")
+        direction_prefix = "-" if sort_dir == "desc" else ""
+        qs = qs.order_by(f"{direction_prefix}{effective_sort_field}", "id")
 
     total = qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
     return qs, total
