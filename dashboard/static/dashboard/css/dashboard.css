@@ -61,6 +61,7 @@ input, select {
   margin-bottom: 12px;
 }
 .panel-title-row h3 { margin: 0; }
+.panel-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .btn-toggle-panel {
   padding: 8px 12px;
   font-size: 13px;

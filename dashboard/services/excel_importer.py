@@ -283,7 +283,7 @@ def _import_expenses(excel_bytes: bytes, scenario: Scenario, year: int, start_mo
                     if "Nueva Clasificación" in gastos_df.columns
                     else "",
                     clasif_cash=str(gastos_df.at[idx, "Clasif. Cash"]).strip() if "Clasif. Cash" in gastos_df.columns else "",
-                    source_tag="excel",
+                    source_tag=Expense.SOURCE_EXCEL,
                 )
             )
 

@@ -67,15 +67,37 @@
 <section class="panel panel-collapsible" id="expensePanel" data-panel-name="expense">
   <div class="panel-title-row">
     <h3>🧾 Bolsas de gastos</h3>
-    <button
-      id="toggleExpensePanel"
-      type="button"
-      class="btn-secondary btn-toggle-panel"
-      aria-controls="expensePanelContent"
-      aria-expanded="false"
-    >
-      Ver gastos
-    </button>
+    <div class="panel-actions">
+      {% if perms.dashboard.add_expense %}
+      <a
+        href="{% url 'dashboard:expense_create' %}?year={{ selected_year }}&month={{ selected_month }}{% if request.GET.provider %}&provider={{ request.GET.provider }}{% endif %}{% if request.GET.payment_date %}&payment_date={{ request.GET.payment_date }}{% endif %}"
+        class="btn-primary"
+      >
+        Agregar gasto
+      </a>
+      <a
+        href="{% url 'dashboard:expense_import_excel' %}?year={{ selected_year }}&month={{ selected_month }}{% if request.GET.provider %}&provider={{ request.GET.provider }}{% endif %}{% if request.GET.payment_date %}&payment_date={{ request.GET.payment_date }}{% endif %}"
+        class="btn-secondary"
+      >
+        Importar gastos
+      </a>
+      {% endif %}
+      <a
+        href="{% url 'dashboard:expense_export_excel' %}?year={{ selected_year }}&month={{ selected_month }}{% if request.GET.provider %}&provider={{ request.GET.provider }}{% endif %}{% if request.GET.payment_date %}&payment_date={{ request.GET.payment_date }}{% endif %}"
+        class="btn-secondary"
+      >
+        Exportar gastos
+      </a>
+      <button
+        id="toggleExpensePanel"
+        type="button"
+        class="btn-secondary btn-toggle-panel"
+        aria-controls="expensePanelContent"
+        aria-expanded="false"
+      >
+        Ver gastos
+      </button>
+    </div>
   </div>
 
   <div id="expensePanelContent" class="collapsible-body" hidden>
@@ -95,6 +117,7 @@
             <th>PAGO DIA</th>
             <th>Proveedor</th>
             <th>Nueva Clasificación</th>
+            <th>Origen</th>
             <th>Monto</th>
             <th></th>
           </tr>
@@ -106,6 +129,7 @@
               <td>{{ exp.payment_label }}</td>
               <td>{{ exp.provider.name }}</td>
               <td>{{ exp.nueva_clasificacion|default:'—' }}</td>
+              <td>{{ exp.source_tag|default:'—' }}</td>
               <td>$ {{ exp.amount|money_ar }}</td>
               <td>
                 {% if perms.dashboard.change_expense %}
@@ -114,7 +138,7 @@
               </td>
             </tr>
           {% empty %}
-            <tr><td colspan="6">No hay gastos para los filtros seleccionados.</td></tr>
+            <tr><td colspan="7">No hay gastos para los filtros seleccionados.</td></tr>
           {% endfor %}
         </tbody>
       </table>

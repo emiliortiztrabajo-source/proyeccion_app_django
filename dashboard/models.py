@@ -83,6 +83,15 @@ class IncomeEntry(models.Model):
 
 
 class Expense(models.Model):
+	SOURCE_EXCEL = "EXCEL"
+	SOURCE_MANUAL = "MANUAL"
+	SOURCE_IMPORTADO = "IMPORTADO"
+	SOURCE_CHOICES = (
+		(SOURCE_EXCEL, "EXCEL"),
+		(SOURCE_MANUAL, "MANUAL"),
+		(SOURCE_IMPORTADO, "IMPORTADO"),
+	)
+
 	scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="expenses")
 	provider = models.ForeignKey(Provider, on_delete=models.PROTECT, related_name="expenses")
 	year = models.PositiveIntegerField()
@@ -94,7 +103,7 @@ class Expense(models.Model):
 	purchase_order = models.CharField(max_length=120, blank=True)
 	nueva_clasificacion = models.CharField(max_length=255, blank=True)
 	clasif_cash = models.CharField(max_length=255, blank=True)
-	source_tag = models.CharField(max_length=100, default="excel")
+	source_tag = models.CharField(max_length=20, choices=SOURCE_CHOICES, default=SOURCE_EXCEL)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 

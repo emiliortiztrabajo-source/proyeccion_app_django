@@ -57,6 +57,45 @@ class ExpenseForm(forms.ModelForm):
         }
 
 
+class ManualExpenseForm(forms.ModelForm):
+    month = forms.TypedChoiceField(label="Mes", choices=[(m, MONTH_NAME_ES[m]) for m in range(1, 13)], coerce=int)
+    year = forms.IntegerField(label="Año", min_value=2000, max_value=2100)
+    source_tag = forms.ChoiceField(label="Origen", choices=Expense.SOURCE_CHOICES)
+
+    class Meta:
+        model = Expense
+        fields = [
+            "financial_code",
+            "nueva_clasificacion",
+            "clasif_cash",
+            "provider",
+            "payment_label",
+            "purchase_order",
+            "month",
+            "year",
+            "payment_date",
+            "amount",
+            "source_tag",
+        ]
+        labels = {
+            "financial_code": "Cod. Financiero",
+            "nueva_clasificacion": "Nueva Clasificación",
+            "clasif_cash": "Clasif. Cash",
+            "payment_label": "PAGO DIA",
+            "purchase_order": "OC",
+            "payment_date": "Fecha de pago real",
+            "amount": "Monto",
+        }
+        widgets = {
+            "payment_date": forms.DateInput(attrs={"type": "date"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["source_tag"].initial = Expense.SOURCE_MANUAL
+        self.fields["payment_date"].required = True
+
+
 class IncomeEntryForm(forms.ModelForm):
     class Meta:
         model = IncomeEntry
@@ -72,3 +111,7 @@ class ExcelImportForm(forms.Form):
     year = forms.IntegerField(label="Año", initial=2026)
     start_month = forms.IntegerField(label="Mes de inicio", initial=3, min_value=1, max_value=12)
     replace_existing = forms.BooleanField(label="Reemplazar datos existentes del escenario", initial=True, required=False)
+
+
+class ExpenseExcelImportForm(forms.Form):
+    excel_file = forms.FileField(label="Archivo Excel de gastos (.xlsx)")
