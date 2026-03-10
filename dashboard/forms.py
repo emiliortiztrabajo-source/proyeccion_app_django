@@ -39,9 +39,16 @@ class ExpenseFilterForm(forms.Form):
     def __init__(self, *args, provider_queryset=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["provider"].queryset = provider_queryset if provider_queryset is not None else Provider.objects.all()
+        self.fields["provider"].empty_label = "Todos los proveedores"
 
 
 class ExpenseForm(forms.ModelForm):
+    change_comment = forms.CharField(
+        label="Comentario del cambio",
+        required=True,
+        widget=forms.Textarea(attrs={"rows": 2, "placeholder": "Explicá brevemente qué cambiaste"}),
+    )
+
     class Meta:
         model = Expense
         fields = [
@@ -63,6 +70,11 @@ class ManualExpenseForm(forms.ModelForm):
     month = forms.TypedChoiceField(label="Mes", choices=[(m, MONTH_NAME_ES[m]) for m in range(1, 13)], coerce=int)
     year = forms.IntegerField(label="Año", min_value=2000, max_value=2100)
     source_tag = forms.ChoiceField(label="Origen", choices=Expense.SOURCE_CHOICES)
+    change_comment = forms.CharField(
+        label="Comentario del cambio",
+        required=True,
+        widget=forms.Textarea(attrs={"rows": 2, "placeholder": "Explicá brevemente por qué agregás este gasto"}),
+    )
 
     class Meta:
         model = Expense

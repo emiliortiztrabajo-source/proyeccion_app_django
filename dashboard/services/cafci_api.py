@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import io
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import pandas as pd
+
 
 CAFCI_API_BASE_URL = "https://api.cafci.org.ar"
+CAFCI_PB_GET_URL = "https://api.pub.cafci.org.ar/pb_get"
 DEFAULT_TIMEOUT_SECONDS = 15
 
 
@@ -37,7 +41,7 @@ def _normalize_date(value: Any) -> date | None:
             return parser(text[:10])
         except ValueError:
             continue
-    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%Y/%m/%d"):
         try:
             return datetime.strptime(text[:10], fmt).date()
         except ValueError:
@@ -71,6 +75,22 @@ def _as_text(value: Any) -> str:
     if isinstance(value, Decimal):
         return str(value)
     return str(value)
+
+
+def _normalize_label_text(value: Any) -> str:
+    text = _as_text(value).lower().strip()
+    replacements = {
+        "á": "a",
+        "é": "e",
+        "í": "i",
+        "ó": "o",
+        "ú": "u",
+        "ü": "u",
+        "ñ": "n",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return " ".join(text.split())
 
 
 def _get_nested(data: Any, path: tuple[str, ...], default: Any = None) -> Any:
@@ -183,6 +203,108 @@ def _get_json(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, 
     return data
 
 
+def _get_bytes(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
+    req = _build_request(url)
+    try:
+        with urlopen(req, timeout=timeout) as response:
+            return response.read()
+    except HTTPError as exc:
+        raise CafciResponseError(f"Error al descargar archivo CAFCI ({exc.code}).") from exc
+    except URLError as exc:
+        raise CafciNetworkError(f"No se pudo conectar con CAFCI para descargar archivo: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise CafciNetworkError("Tiempo de espera agotado al descargar archivo CAFCI.") from exc
+
+
+def _find_planilla_header_row(raw_df: pd.DataFrame) -> int | None:
+    max_scan = min(len(raw_df), 40)
+    for idx in range(max_scan):
+        row_text = " ".join([str(x).lower() for x in raw_df.iloc[idx].tolist() if pd.notna(x)])
+        if "codigo cafci" in row_text and "valor (mil cuotapartes)" in row_text:
+            return idx
+    return None
+
+
+def _extract_planilla_daily_row(*, fund: str, fund_class: str, fund_name: str | None = None) -> dict[str, Any] | None:
+    binary = _get_bytes(CAFCI_PB_GET_URL)
+    raw_df = pd.read_excel(io.BytesIO(binary), sheet_name=0, header=None)
+
+    # The daily CAFCI sheet consistently starts data rows at index 9.
+    # Avoid dynamic header detection because CAFCI changes heading text and layout frequently.
+    data_df = raw_df.iloc[9:].copy()
+    if data_df.empty:
+        return None
+
+    data_df = data_df.reset_index(drop=True)
+
+    # Column positions validated against current CAFCI Planilla Diaria format.
+    col_fondo = 0
+    col_fecha = 4
+    col_cuotaparte_actual = 5
+    col_cuotaparte_anterior = 6
+    col_variacion_pct = 7
+    col_codigo_cafci = 20
+
+    target_codes = [str(fund).strip(), str(fund_class).strip()]
+    target_codes = [c for c in target_codes if c]
+
+    candidates = data_df[data_df[col_codigo_cafci].notna()].copy()
+    if candidates.empty:
+        return None
+
+    candidates["__codigo_cafci_str"] = candidates[col_codigo_cafci].astype(str).str.strip()
+
+    for code in target_codes:
+        matched = candidates[candidates["__codigo_cafci_str"] == code]
+        if matched.empty:
+            continue
+
+        row = matched.iloc[0]
+        actual = _normalize_decimal(row.get(col_cuotaparte_actual))
+        previous = _normalize_decimal(row.get(col_cuotaparte_anterior))
+        computed_daily_return = None
+        if actual is not None and previous not in (None, Decimal("0")):
+            computed_daily_return = ((actual - previous) / previous) * Decimal("100")
+        return {
+            "fundName": _as_text(row.get(col_fondo)),
+            "dailyDate": _normalize_date(row.get(col_fecha)),
+            "cuotaparte": actual,
+            "cuotapartePrevious": previous,
+            "dailyReturn": computed_daily_return if computed_daily_return is not None else _normalize_decimal(row.get(col_variacion_pct)),
+            "dailyReturnSource": "formula" if computed_daily_return is not None else "variac_pct",
+            "codigoCafci": code,
+            "source": CAFCI_PB_GET_URL,
+        }
+
+    if fund_name:
+        normalized_target = _normalize_label_text(fund_name)
+        if normalized_target:
+            candidates["__fondo_norm"] = candidates[col_fondo].apply(_normalize_label_text)
+            by_name = candidates[candidates["__fondo_norm"].str.contains(normalized_target, na=False)]
+            if by_name.empty:
+                by_name = candidates[candidates["__fondo_norm"].apply(lambda x: normalized_target in x or x in normalized_target)]
+
+            if not by_name.empty:
+                row = by_name.iloc[0]
+                actual = _normalize_decimal(row.get(col_cuotaparte_actual))
+                previous = _normalize_decimal(row.get(col_cuotaparte_anterior))
+                computed_daily_return = None
+                if actual is not None and previous not in (None, Decimal("0")):
+                    computed_daily_return = ((actual - previous) / previous) * Decimal("100")
+                return {
+                    "fundName": _as_text(row.get(col_fondo)),
+                    "dailyDate": _normalize_date(row.get(col_fecha)),
+                    "cuotaparte": actual,
+                    "cuotapartePrevious": previous,
+                    "dailyReturn": computed_daily_return if computed_daily_return is not None else _normalize_decimal(row.get(col_variacion_pct)),
+                    "dailyReturnSource": "formula" if computed_daily_return is not None else "variac_pct",
+                    "codigoCafci": _as_text(row.get(col_codigo_cafci)),
+                    "source": CAFCI_PB_GET_URL,
+                }
+
+    return None
+
+
 def get_fund_class_ficha(fund: str, fund_class: str) -> dict[str, Any]:
     url = f"{CAFCI_API_BASE_URL}/fondo/{fund}/clase/{fund_class}/ficha"
     payload = _get_json(url)
@@ -253,17 +375,53 @@ def parse_performance_payload(payload: dict[str, Any], *, source_url: str, start
     }
 
 
-def build_cafci_snapshot(*, fund: str, fund_class: str, start_date: date, end_date: date) -> dict[str, Any]:
-    ficha_result = get_fund_class_ficha(fund, fund_class)
-    perf_result = get_fund_class_performance(fund, fund_class, start_date, end_date)
+def build_cafci_snapshot(*, fund: str, fund_class: str, start_date: date, end_date: date, fund_name: str | None = None) -> dict[str, Any]:
+    ficha: dict[str, Any] = {
+        "fund": fund,
+        "fundClass": fund_class,
+        "dailyReturn": None,
+        "dailyDate": None,
+        "cuotaparte": None,
+        "otherReturns": [],
+        "dailyInfoItems": [],
+        "lastUpdate": None,
+        "source": None,
+    }
+    planilla_row = _extract_planilla_daily_row(fund=fund, fund_class=fund_class, fund_name=fund_name)
+    if not planilla_row:
+        raise CafciApiError("No se encontró la línea del fondo en la planilla diaria de CAFCI.")
 
-    ficha = parse_ficha_payload(ficha_result["payload"], fund=fund, fund_class=fund_class, source_url=ficha_result["url"])
-    performance = parse_performance_payload(
-        perf_result["payload"],
-        source_url=perf_result["url"],
-        start_date=start_date,
-        end_date=end_date,
-    )
+    ficha["fundName"] = planilla_row.get("fundName")
+    ficha["rowLoaded"] = True
+    if planilla_row.get("dailyReturn") is not None:
+        ficha["dailyReturn"] = planilla_row["dailyReturn"]
+    if planilla_row.get("dailyDate") is not None:
+        ficha["dailyDate"] = planilla_row["dailyDate"]
+        ficha["lastUpdate"] = planilla_row["dailyDate"]
+    if planilla_row.get("cuotaparte") is not None:
+        ficha["cuotaparte"] = planilla_row["cuotaparte"]
+    if planilla_row.get("cuotapartePrevious") is not None:
+        ficha["cuotapartePrevious"] = planilla_row["cuotapartePrevious"]
+
+    source_name = planilla_row.get("fundName") or "Planilla Diaria"
+    ficha["source"] = f"{planilla_row['source']} (codigo {planilla_row['codigoCafci']} - {source_name})"
+    daily_info = ficha.get("dailyInfoItems") or []
+    daily_info.insert(0, {"campo": "planilla.fondo", "valor": _as_text(planilla_row.get("fundName"))})
+    daily_info.insert(1, {"campo": "planilla.codigo_cafci", "valor": _as_text(planilla_row.get("codigoCafci"))})
+    daily_info.insert(2, {"campo": "planilla.fecha", "valor": _as_text(planilla_row.get("dailyDate"))})
+    daily_info.insert(3, {"campo": "planilla.cuotaparte_actual", "valor": _as_text(planilla_row.get("cuotaparte"))})
+    daily_info.insert(4, {"campo": "planilla.cuotaparte_anterior", "valor": _as_text(planilla_row.get("cuotapartePrevious"))})
+    daily_info.insert(5, {"campo": "planilla.rendimiento_diario_pct", "valor": _as_text(planilla_row.get("dailyReturn"))})
+    daily_info.insert(6, {"campo": "planilla.rendimiento_fuente", "valor": _as_text(planilla_row.get("dailyReturnSource"))})
+    ficha["dailyInfoItems"] = daily_info
+
+    performance: dict[str, Any] = {
+        "startDate": start_date,
+        "endDate": end_date,
+        "rendimiento": None,
+        "series": [],
+        "source": None,
+    }
 
     return {
         "ficha": ficha,

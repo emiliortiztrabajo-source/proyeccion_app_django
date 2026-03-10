@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django import template
+from django.utils.http import urlencode
 
 register = template.Library()
 
@@ -39,3 +40,18 @@ def abs_value(value):
     if value is None:
         return None
     return abs(Decimal(value))
+
+
+@register.simple_tag(takes_context=True)
+def update_query(context, **kwargs):
+    request = context.get("request")
+    if request is None:
+        return ""
+
+    query = request.GET.copy()
+    for key, value in kwargs.items():
+        if value in (None, ""):
+            query.pop(key, None)
+        else:
+            query[key] = value
+    return query.urlencode()
