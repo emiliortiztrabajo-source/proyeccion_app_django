@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib import messages
@@ -7,9 +7,11 @@ from django.db.models import Sum
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 
-from .forms import DashboardFilterForm, ExcelImportForm, ExpenseExcelImportForm, ExpenseFilterForm, ExpenseForm, IncomeEntryForm, ManualExpenseForm
+from .forms import CafciLookupForm, DashboardFilterForm, ExcelImportForm, ExpenseExcelImportForm, ExpenseFilterForm, ExpenseForm, IncomeEntryForm, ManualExpenseForm
 from .models import Expense, IncomeEntry, Provider, Scenario
+from .services.cafci_api import CafciApiError, build_cafci_snapshot
 from .services.expense_excel_io import export_expenses_to_excel, import_expenses_from_excel
 from .services.dashboard_logic import (
 	build_year_cash_projection,
@@ -22,12 +24,82 @@ from .services.parsing import MONTH_NAME_ES
 from .services.excel_importer import import_excel_bytes
 
 
+CAFCI_FUND_ID = "211"
+CAFCI_FUND_CLASS = "211"
+
+
 def _sum_interest(rows):
 	total = Decimal("0")
 	for row in rows:
 		if row["interes_diario"] is not None:
 			total += row["interes_diario"]
 	return total
+
+
+def _build_cafci_context(request):
+	today = date.today()
+	default_start = today - timedelta(days=30)
+	basic_context = {
+		"cafci_lookup_form": CafciLookupForm(request.GET or None),
+		"cafci_ficha": None,
+		"cafci_performance": None,
+		"cafci_error": None,
+		"cafci_local_updated_at": None,
+		"cafci_source_ficha": None,
+		"cafci_source_performance": None,
+		"cafci_daily_info_items": [],
+		"cafci_other_returns": [],
+		"cafci_performance_series": [],
+		"cafci_selected_fund": CAFCI_FUND_ID,
+		"cafci_selected_class": CAFCI_FUND_CLASS,
+		"cafci_selected_start": default_start,
+		"cafci_selected_end": today,
+	}
+
+	lookup_form = basic_context["cafci_lookup_form"]
+	fund = CAFCI_FUND_ID
+	fund_class = CAFCI_FUND_CLASS
+	start_date = default_start
+	end_date = today
+	if lookup_form.is_valid():
+		start_date = lookup_form.cleaned_data.get("start_date") or default_start
+		end_date = lookup_form.cleaned_data.get("end_date") or today
+
+	basic_context.update(
+		{
+			"cafci_selected_fund": fund,
+			"cafci_selected_class": fund_class,
+			"cafci_selected_start": start_date,
+			"cafci_selected_end": end_date,
+		}
+	)
+
+	try:
+		snapshot = build_cafci_snapshot(
+			fund=fund,
+			fund_class=fund_class,
+			start_date=start_date,
+			end_date=end_date,
+		)
+		ficha = snapshot.get("ficha") or {}
+		performance = snapshot.get("performance") or {}
+
+		basic_context.update(
+			{
+				"cafci_ficha": ficha,
+				"cafci_performance": performance,
+				"cafci_daily_info_items": ficha.get("dailyInfoItems") or [],
+				"cafci_other_returns": ficha.get("otherReturns") or [],
+				"cafci_performance_series": performance.get("series") or [],
+				"cafci_source_ficha": ficha.get("source"),
+				"cafci_source_performance": performance.get("source"),
+				"cafci_local_updated_at": timezone.localtime(timezone.now()),
+			}
+		)
+	except CafciApiError as exc:
+		basic_context["cafci_error"] = str(exc)
+
+	return basic_context
 
 
 @login_required
@@ -130,6 +202,7 @@ def dashboard_home(request):
 		"calc_expense_options": calc_expense_options,
 		"today": date.today(),
 	}
+	context.update(_build_cafci_context(request))
 	return render(request, "dashboard/home.html", context)
 
 

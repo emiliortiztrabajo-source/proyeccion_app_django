@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from django import forms
 
 from .models import Expense, IncomeEntry, Provider
@@ -115,3 +117,22 @@ class ExcelImportForm(forms.Form):
 
 class ExpenseExcelImportForm(forms.Form):
     excel_file = forms.FileField(label="Archivo Excel de gastos (.xlsx)")
+
+
+class CafciLookupForm(forms.Form):
+    start_date = forms.DateField(label="Desde", widget=forms.DateInput(attrs={"type": "date"}), required=False)
+    end_date = forms.DateField(label="Hasta", widget=forms.DateInput(attrs={"type": "date"}), required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        today = date.today()
+        self.fields["start_date"].initial = today - timedelta(days=30)
+        self.fields["end_date"].initial = today
+
+    def clean(self):
+        cleaned_data = super().clean()
+        start_date = cleaned_data.get("start_date")
+        end_date = cleaned_data.get("end_date")
+        if start_date and end_date and end_date < start_date:
+            self.add_error("end_date", "La fecha Hasta debe ser mayor o igual a Desde.")
+        return cleaned_data

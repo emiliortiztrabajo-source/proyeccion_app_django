@@ -238,6 +238,26 @@ function initExpensePanelToggle() {
   });
 }
 
+function initCafciPanelToggle() {
+  const toggleButton = document.getElementById('toggleCafciPanel');
+  const panelContent = document.getElementById('cafciPanelContent');
+  if (!toggleButton || !panelContent) return;
+
+  const setExpanded = (expanded) => {
+    toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggleButton.textContent = expanded ? 'Ocultar datos externos' : 'Ver datos externos';
+    panelContent.hidden = !expanded;
+  };
+
+  setExpanded(true);
+
+  toggleButton.addEventListener('click', () => {
+    const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
+    setExpanded(!isExpanded);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initExpensePanelToggle();
+  initCafciPanelToggle();
 });
