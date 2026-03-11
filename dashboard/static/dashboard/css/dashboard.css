@@ -33,7 +33,13 @@ body {
 }
 .head-wrap h1 { margin: 0; font-size: 22px; }
 .head-wrap p { margin: 2px 0 0; opacity: .8; font-size: 13px; }
-.top-nav { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.top-nav { margin-left: auto; display: none; align-items: center; gap: 12px; flex-wrap: wrap; }
+.top-nav.is-open { display: flex; }
+.top-nav-toggle {
+  margin-left: auto;
+  padding: 8px 12px;
+  font-size: 13px;
+}
 .top-nav a, .btn-link { color: #bfdbfe; text-decoration: none; background: none; border: 0; cursor: pointer; font: inherit; }
 .page-content { padding: 22px 0 40px; }
 

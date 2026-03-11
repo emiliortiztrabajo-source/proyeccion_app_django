@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import io
+import ssl
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -172,10 +173,25 @@ def _build_request(url: str) -> Request:
     )
 
 
+def _build_ssl_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    # CAFCI endpoints can present legacy TLS/cipher settings on some days.
+    # Relaxing minimums improves interoperability on newer OpenSSL runtimes.
+    try:
+        context.minimum_version = ssl.TLSVersion.TLSv1
+    except Exception:
+        pass
+    try:
+        context.set_ciphers("DEFAULT:@SECLEVEL=1")
+    except Exception:
+        pass
+    return context
+
+
 def _get_json(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
     req = _build_request(url)
     try:
-        with urlopen(req, timeout=timeout) as response:
+        with urlopen(req, timeout=timeout, context=_build_ssl_context()) as response:
             raw_body = response.read().decode("utf-8")
     except HTTPError as exc:
         body = ""
@@ -206,7 +222,7 @@ def _get_json(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, 
 def _get_bytes(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
     req = _build_request(url)
     try:
-        with urlopen(req, timeout=timeout) as response:
+        with urlopen(req, timeout=timeout, context=_build_ssl_context()) as response:
             return response.read()
     except HTTPError as exc:
         raise CafciResponseError(f"Error al descargar archivo CAFCI ({exc.code}).") from exc

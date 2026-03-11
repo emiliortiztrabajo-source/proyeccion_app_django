@@ -141,3 +141,21 @@ class ExpenseChangeLog(models.Model):
 
 	def __str__(self):
 		return f"{self.get_action_display()} - {self.changed_at:%d/%m/%Y %H:%M}"
+
+
+class FundCuotaparteHistory(models.Model):
+	fund_name = models.CharField(max_length=255)
+	quote_date = models.DateField()
+	cuotaparte = models.DecimalField(max_digits=20, decimal_places=6)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["fund_name", "quote_date"]
+		unique_together = ("fund_name", "quote_date")
+		indexes = [
+			models.Index(fields=["fund_name", "quote_date"]),
+		]
+
+	def __str__(self):
+		return f"{self.fund_name} - {self.quote_date}"

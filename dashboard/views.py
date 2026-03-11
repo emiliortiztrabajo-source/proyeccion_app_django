@@ -1,9 +1,10 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required, user_passes_test
 from django.db.models import Sum
+from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -11,8 +12,8 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .forms import DashboardFilterForm, ExcelImportForm, ExpenseExcelImportForm, ExpenseFilterForm, ExpenseForm, IncomeEntryForm, ManualExpenseForm
-from .models import Expense, ExpenseChangeLog, IncomeEntry, Provider, Scenario
-from .services.cafci_api import CafciApiError, build_cafci_snapshot
+from .models import Expense, ExpenseChangeLog, FundCuotaparteHistory, IncomeEntry, Provider, Scenario
+from .services.cafci_api import CafciApiError, CafciNetworkError, build_cafci_snapshot
 from .services.expense_excel_io import export_expenses_to_excel, import_expenses_from_excel
 from .services.dashboard_logic import (
 	build_year_cash_projection,
@@ -37,6 +38,50 @@ CAFCI_DAILY_FUND_NAMES = [
 	"1822 RAICES INFRAESTRUCTURA",
 	"1822 RAICES INVERSION",
 	"1822 RAICES DOLARES PLUS",
+]
+CAFCI_1822_BASE_HISTORY = [
+	("10/03/2026", "87.539829"),
+	("09/03/2026", "87.415505"),
+	("06/03/2026", "87.310665"),
+	("05/03/2026", "87.241441"),
+	("04/03/2026", "87.17636"),
+	("03/03/2026", "87.018081"),
+	("02/03/2026", "86.886538"),
+	("27/02/2026", "86.693581"),
+	("26/02/2026", "86.334127"),
+	("25/02/2026", "85.932665"),
+	("24/02/2026", "85.765632"),
+	("23/02/2026", "85.417524"),
+	("20/02/2026", "85.328437"),
+	("19/02/2026", "85.123479"),
+	("18/02/2026", "85.187438"),
+	("13/02/2026", "85.029407"),
+	("12/02/2026", "84.53174"),
+	("11/02/2026", "84.263955"),
+	("10/02/2026", "84.241634"),
+	("09/02/2026", "84.095859"),
+	("06/02/2026", "84.045319"),
+	("05/02/2026", "83.647474"),
+	("04/02/2026", "83.422105"),
+	("03/02/2026", "82.973268"),
+	("02/02/2026", "82.898985"),
+	("30/01/2026", "82.978661"),
+	("29/01/2026", "82.735238"),
+	("28/01/2026", "82.857579"),
+	("27/01/2026", "82.768305"),
+	("26/01/2026", "82.466267"),
+	("23/01/2026", "82.284222"),
+	("22/01/2026", "81.959325"),
+	("21/01/2026", "81.665615"),
+	("20/01/2026", "81.80756"),
+	("19/01/2026", "81.893661"),
+	("16/01/2026", "82.115937"),
+	("15/01/2026", "82.118145"),
+	("14/01/2026", "82.344989"),
+	("13/01/2026", "82.303846"),
+	("12/01/2026", "82.223723"),
+	("09/01/2026", "82.136299"),
+	("08/01/2026", "81.800055"),
 ]
 
 
@@ -64,6 +109,103 @@ def _sum_interest(rows):
 		if row["interes_diario"] is not None:
 			total += row["interes_diario"]
 	return total
+
+
+def _parse_history_date(raw_value):
+	if not raw_value:
+		return None
+	if isinstance(raw_value, date):
+		return raw_value
+	text = str(raw_value).strip()
+	if not text:
+		return None
+	for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+		try:
+			return datetime.strptime(text, fmt).date()
+		except ValueError:
+			continue
+	return None
+
+
+def _compute_cuotaparte_average_daily_rate(history_points):
+	clean_points = []
+	for point_date, point_value in history_points:
+		parsed_date = _parse_history_date(point_date)
+		if parsed_date is None:
+			continue
+		try:
+			parsed_value = Decimal(str(point_value))
+		except Exception:
+			continue
+		if parsed_value <= 0:
+			continue
+		clean_points.append((parsed_date, parsed_value))
+
+	if len(clean_points) < 2:
+		return None, 0
+
+	# Keep a single value per date (last value wins) and sort ascending.
+	by_date = {}
+	for point_date, point_value in clean_points:
+		by_date[point_date] = point_value
+	ordered = sorted(by_date.items(), key=lambda x: x[0])
+
+	if len(ordered) < 2:
+		return None, len(ordered)
+
+	daily_returns = []
+	for idx in range(1, len(ordered)):
+		previous_value = ordered[idx - 1][1]
+		current_value = ordered[idx][1]
+		if previous_value == 0:
+			continue
+		daily_returns.append((current_value / previous_value) - Decimal("1"))
+
+	if not daily_returns:
+		return None, len(ordered)
+
+	average_rate = sum(daily_returns, Decimal("0")) / Decimal(len(daily_returns))
+	return average_rate, len(ordered)
+
+
+def _build_1822_estimated_rate(rows):
+	normalized_target = _normalize_text(CAFCI_CALCULATOR_FUND_NAME)
+	history_points = list(CAFCI_1822_BASE_HISTORY)
+
+	# Persist latest downloaded values so future days are accumulated automatically.
+	for row in rows:
+		fund_name = row.get("fund_name") or row.get("requested_name") or ""
+		if _normalize_text(fund_name).find(normalized_target) < 0:
+			continue
+		if row.get("daily_date") and row.get("cuotaparte") is not None:
+			try:
+				FundCuotaparteHistory.objects.update_or_create(
+					fund_name=CAFCI_CALCULATOR_FUND_NAME,
+					quote_date=row.get("daily_date"),
+					defaults={"cuotaparte": row.get("cuotaparte")},
+				)
+			except (OperationalError, ProgrammingError):
+				# Migration may still be pending; keep running with the manual base history.
+				pass
+
+	try:
+		db_points = list(
+			FundCuotaparteHistory.objects.filter(fund_name=CAFCI_CALCULATOR_FUND_NAME)
+			.values_list("quote_date", "cuotaparte")
+		)
+	except (OperationalError, ProgrammingError):
+		db_points = []
+
+	history_points.extend(db_points)
+
+	for row in rows:
+		fund_name = row.get("fund_name") or row.get("requested_name") or ""
+		if _normalize_text(fund_name).find(normalized_target) < 0:
+			continue
+		if row.get("daily_date") and row.get("cuotaparte") is not None:
+			history_points.append((row.get("daily_date"), row.get("cuotaparte")))
+
+	return _compute_cuotaparte_average_daily_rate(history_points)
 
 
 def _format_expense_value(field, value):
@@ -117,6 +259,7 @@ def _build_cafci_context(request):
 	basic_context = {
 		"cafci_ficha": None,
 		"cafci_error": None,
+		"cafci_notice": None,
 		"cafci_local_updated_at": None,
 		"cafci_source_ficha": None,
 		"cafci_daily_info_items": [],
@@ -124,8 +267,12 @@ def _build_cafci_context(request):
 		"cafci_selected_class": CAFCI_CALCULATOR_FUND_CLASS,
 		"cafci_target_name": CAFCI_CALCULATOR_FUND_NAME,
 		"cafci_fund_rows": [],
+		"cafci_1822_estimated_rate_decimal": None,
+		"cafci_1822_estimated_rate_pct": None,
+		"cafci_1822_points_used": 0,
 	}
 	errors = []
+	network_issue = False
 	rows = []
 	calculator_ficha = None
 	normalized_target = _normalize_text(CAFCI_CALCULATOR_FUND_NAME)
@@ -155,7 +302,24 @@ def _build_cafci_context(request):
 			if calculator_ficha is None and _normalize_text(found_name).find(normalized_target) >= 0:
 				calculator_ficha = ficha
 		except CafciApiError as exc:
+			if isinstance(exc, CafciNetworkError):
+				network_issue = True
+				break
 			errors.append(f"{fund_name}: {exc}")
+
+	if errors and not rows:
+		rows = [
+			{
+				"requested_name": fund_name,
+				"fund_name": fund_name,
+				"daily_date": None,
+				"cuotaparte": None,
+				"cuotaparte_previous": None,
+				"daily_return": None,
+				"source": None,
+			}
+			for fund_name in CAFCI_DAILY_FUND_NAMES
+		]
 
 	if calculator_ficha is None:
 		for row in rows:
@@ -171,8 +335,23 @@ def _build_cafci_context(request):
 				}
 				break
 
+	estimated_rate_decimal, points_used = _build_1822_estimated_rate(rows)
+	estimated_rate_pct = None
+	if estimated_rate_decimal is not None:
+		estimated_rate_pct = estimated_rate_decimal * Decimal("100")
+
+	for row in rows:
+		fund_name = row.get("fund_name") or row.get("requested_name") or ""
+		if _normalize_text(fund_name).find(normalized_target) >= 0 and estimated_rate_pct is not None:
+			row["estimated_avg_return_pct"] = estimated_rate_pct
+		else:
+			row["estimated_avg_return_pct"] = None
+
 	basic_context["cafci_fund_rows"] = rows
 	basic_context["cafci_local_updated_at"] = timezone.localtime(timezone.now()) if rows else None
+	basic_context["cafci_1822_estimated_rate_decimal"] = estimated_rate_decimal
+	basic_context["cafci_1822_estimated_rate_pct"] = estimated_rate_pct
+	basic_context["cafci_1822_points_used"] = points_used
 
 	if calculator_ficha is not None:
 		basic_context.update(
@@ -185,6 +364,11 @@ def _build_cafci_context(request):
 
 	if errors:
 		basic_context["cafci_error"] = " | ".join(errors)
+	elif network_issue:
+		basic_context["cafci_notice"] = (
+			"No se pudo conectar con CAFCI (error SSL/TLS o red). "
+			"La app sigue funcionando con el promedio estimado local para la calculadora."
+		)
 
 	if not rows and not errors:
 		basic_context["cafci_error"] = "No se encontraron los fondos solicitados en la planilla diaria de CAFCI."
@@ -310,6 +494,7 @@ def dashboard_home(request):
 		"total_mes": _sum_interest(month_rows),
 		"total_anual": _sum_interest(cash_rows),
 		"daily_rate_pct": float(scenario.daily_interest_rate * Decimal("100")),
+		"daily_rate_pct_input": f"{(scenario.daily_interest_rate * Decimal('100')):.4f}",
 		"adelanto_daily_rate_decimal": f"{scenario.daily_interest_rate:.6f}",
 		"calc_expense_options": calc_expense_options,
 		"expense_sort": effective_sort,
@@ -324,12 +509,19 @@ def dashboard_home(request):
 	}
 	context.update(_build_cafci_context(request))
 
-	cafci_ficha = context.get("cafci_ficha") or {}
-	cafci_daily_return_pct = cafci_ficha.get("dailyReturn")
-	if cafci_daily_return_pct is not None:
-		rate_decimal = (Decimal(cafci_daily_return_pct) / Decimal("100"))
-		context["daily_rate_pct"] = float(Decimal(cafci_daily_return_pct))
-		context["adelanto_daily_rate_decimal"] = f"{rate_decimal:.10f}".rstrip("0").rstrip(".")
+	estimated_rate_decimal = context.get("cafci_1822_estimated_rate_decimal")
+	if estimated_rate_decimal is not None:
+		context["daily_rate_pct"] = float(estimated_rate_decimal * Decimal("100"))
+		context["daily_rate_pct_input"] = f"{(estimated_rate_decimal * Decimal('100')):.4f}"
+		context["adelanto_daily_rate_decimal"] = f"{estimated_rate_decimal:.10f}".rstrip("0").rstrip(".")
+	else:
+		cafci_ficha = context.get("cafci_ficha") or {}
+		cafci_daily_return_pct = cafci_ficha.get("dailyReturn")
+		if cafci_daily_return_pct is not None:
+			rate_decimal = (Decimal(cafci_daily_return_pct) / Decimal("100"))
+			context["daily_rate_pct"] = float(Decimal(cafci_daily_return_pct))
+			context["daily_rate_pct_input"] = f"{Decimal(cafci_daily_return_pct):.4f}"
+			context["adelanto_daily_rate_decimal"] = f"{rate_decimal:.10f}".rstrip("0").rstrip(".")
 
 	return render(request, "dashboard/home.html", context)
 

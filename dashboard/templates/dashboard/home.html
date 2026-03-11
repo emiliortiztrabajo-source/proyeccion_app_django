@@ -278,6 +278,10 @@
     <div class="msg error">No se pudo obtener datos de CAFCI: {{ cafci_error }}</div>
   {% endif %}
 
+  {% if cafci_notice %}
+    <div class="msg">{{ cafci_notice }}</div>
+  {% endif %}
+
   {% if cafci_local_updated_at %}
     <p class="section-meta">Ultima actualizacion local: <strong>{{ cafci_local_updated_at|date:'d/m/Y H:i:s' }}</strong></p>
   {% endif %}
@@ -293,6 +297,7 @@
           <th>Cuotaparte actual</th>
           <th>Cuotaparte anterior</th>
           <th>Rendimiento diario</th>
+          <th>Promedio estimado usado</th>
         </tr>
       </thead>
       <tbody>
@@ -304,9 +309,10 @@
             <td>{% if fund.cuotaparte != None %}$ {{ fund.cuotaparte|money_ar }}{% else %}-{% endif %}</td>
             <td>{% if fund.cuotaparte_previous != None %}$ {{ fund.cuotaparte_previous|money_ar }}{% else %}-{% endif %}</td>
             <td>{% if fund.daily_return != None %}{{ fund.daily_return|floatformat:6 }}%{% else %}-{% endif %}</td>
+            <td>{% if fund.estimated_avg_return_pct != None %}{{ fund.estimated_avg_return_pct|floatformat:6 }}%{% else %}-{% endif %}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="6">No se encontraron fondos para mostrar.</td></tr>
+          <tr><td colspan="7">No se encontraron fondos para mostrar.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -368,7 +374,7 @@
       </div>
       <div class="form-row">
         <label for="fciTasa">Tasa diaria (%)</label>
-        <input id="fciTasa" type="number" min="0" step="0.0001" value="{{ daily_rate_pct|floatformat:4 }}">
+        <input id="fciTasa" type="number" min="0" step="0.0001" value="{{ daily_rate_pct_input }}">
       </div>
       <div class="form-row">
         <label for="fciModo">Modo</label>
