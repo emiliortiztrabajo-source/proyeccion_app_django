@@ -25,9 +25,37 @@ from .services.parsing import MONTH_NAME_ES
 from .services.excel_importer import import_excel_bytes
 
 
-CAFCI_FUND_ID = "3764"
-CAFCI_FUND_CLASS = "3764"
-CAFCI_FUND_NAME = "1822 Raices Gestion"
+CAFCI_CALCULATOR_FUND_ID = ""
+CAFCI_CALCULATOR_FUND_CLASS = ""
+CAFCI_CALCULATOR_FUND_NAME = "1822 RAICES INVERSION"
+CAFCI_DAILY_FUND_NAMES = [
+	"1822 RAICES AHORRO PLUS",
+	"1822 RAICES VALORES FIDUCIARIOS",
+	"1822 RAICES AHORRO PESOS",
+	"1822 RAICES RENTA EN PESOS",
+	"1822 RAICES VALORES NEGOCIABLES",
+	"1822 RAICES INFRAESTRUCTURA",
+	"1822 RAICES INVERSION",
+	"1822 RAICES DOLARES PLUS",
+]
+
+
+def _normalize_text(value):
+	if value is None:
+		return ""
+	text = str(value).strip().lower()
+	replacements = {
+		"á": "a",
+		"é": "e",
+		"í": "i",
+		"ó": "o",
+		"ú": "u",
+		"ü": "u",
+		"ñ": "n",
+	}
+	for old, new in replacements.items():
+		text = text.replace(old, new)
+	return " ".join(text.split())
 
 
 def _sum_interest(rows):
@@ -92,31 +120,74 @@ def _build_cafci_context(request):
 		"cafci_local_updated_at": None,
 		"cafci_source_ficha": None,
 		"cafci_daily_info_items": [],
-		"cafci_selected_fund": CAFCI_FUND_ID,
-		"cafci_selected_class": CAFCI_FUND_CLASS,
-		"cafci_target_name": CAFCI_FUND_NAME,
+		"cafci_selected_fund": CAFCI_CALCULATOR_FUND_ID,
+		"cafci_selected_class": CAFCI_CALCULATOR_FUND_CLASS,
+		"cafci_target_name": CAFCI_CALCULATOR_FUND_NAME,
+		"cafci_fund_rows": [],
 	}
+	errors = []
+	rows = []
+	calculator_ficha = None
+	normalized_target = _normalize_text(CAFCI_CALCULATOR_FUND_NAME)
 
-	try:
-		snapshot = build_cafci_snapshot(
-			fund=CAFCI_FUND_ID,
-			fund_class=CAFCI_FUND_CLASS,
-			fund_name=CAFCI_FUND_NAME,
-			start_date=today,
-			end_date=today,
-		)
-		ficha = snapshot.get("ficha") or {}
+	for fund_name in CAFCI_DAILY_FUND_NAMES:
+		try:
+			snapshot = build_cafci_snapshot(
+				fund="",
+				fund_class="",
+				fund_name=fund_name,
+				start_date=today,
+				end_date=today,
+			)
+			ficha = snapshot.get("ficha") or {}
+			found_name = ficha.get("fundName") or fund_name
+			rows.append(
+				{
+					"requested_name": fund_name,
+					"fund_name": found_name,
+					"daily_date": ficha.get("dailyDate"),
+					"cuotaparte": ficha.get("cuotaparte"),
+					"cuotaparte_previous": ficha.get("cuotapartePrevious"),
+					"daily_return": ficha.get("dailyReturn"),
+					"source": ficha.get("source"),
+				}
+			)
+			if calculator_ficha is None and _normalize_text(found_name).find(normalized_target) >= 0:
+				calculator_ficha = ficha
+		except CafciApiError as exc:
+			errors.append(f"{fund_name}: {exc}")
 
+	if calculator_ficha is None:
+		for row in rows:
+			if _normalize_text(row.get("requested_name")).find(normalized_target) >= 0:
+				calculator_ficha = {
+					"fundName": row.get("fund_name"),
+					"dailyDate": row.get("daily_date"),
+					"cuotaparte": row.get("cuotaparte"),
+					"cuotapartePrevious": row.get("cuotaparte_previous"),
+					"dailyReturn": row.get("daily_return"),
+					"source": row.get("source"),
+					"dailyInfoItems": [],
+				}
+				break
+
+	basic_context["cafci_fund_rows"] = rows
+	basic_context["cafci_local_updated_at"] = timezone.localtime(timezone.now()) if rows else None
+
+	if calculator_ficha is not None:
 		basic_context.update(
 			{
-				"cafci_ficha": ficha,
-				"cafci_daily_info_items": ficha.get("dailyInfoItems") or [],
-				"cafci_source_ficha": ficha.get("source"),
-				"cafci_local_updated_at": timezone.localtime(timezone.now()),
+				"cafci_ficha": calculator_ficha,
+				"cafci_daily_info_items": calculator_ficha.get("dailyInfoItems") or [],
+				"cafci_source_ficha": calculator_ficha.get("source"),
 			}
 		)
-	except CafciApiError as exc:
-		basic_context["cafci_error"] = str(exc)
+
+	if errors:
+		basic_context["cafci_error"] = " | ".join(errors)
+
+	if not rows and not errors:
+		basic_context["cafci_error"] = "No se encontraron los fondos solicitados en la planilla diaria de CAFCI."
 
 	return basic_context
 

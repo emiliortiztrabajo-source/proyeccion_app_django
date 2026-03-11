@@ -317,7 +317,7 @@ function initCafciPanelToggle() {
     panelContent.hidden = !expanded;
   };
 
-  setExpanded(true);
+  setExpanded(false);
 
   toggleButton.addEventListener('click', () => {
     const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
