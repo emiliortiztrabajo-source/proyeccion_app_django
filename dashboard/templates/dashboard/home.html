@@ -265,14 +265,14 @@
         type="button"
         class="btn-secondary btn-toggle-panel"
         aria-controls="cafciPanelContent"
-        aria-expanded="true"
+        aria-expanded="false"
       >
-        Ocultar datos externos
+        Ver datos externos
       </button>
     </div>
   </div>
 
-  <div id="cafciPanelContent" class="collapsible-body">
+  <div id="cafciPanelContent" class="collapsible-body" hidden>
 
   {% if cafci_error %}
     <div class="msg error">No se pudo obtener datos de CAFCI: {{ cafci_error }}</div>
@@ -282,75 +282,31 @@
     <p class="section-meta">Ultima actualizacion local: <strong>{{ cafci_local_updated_at|date:'d/m/Y H:i:s' }}</strong></p>
   {% endif %}
 
-  <p class="section-meta">
-    Fondo encontrado en Excel diario:
-    <strong>{{ cafci_ficha.fundName|default:'No encontrado' }}</strong>
-  </p>
-
-  <p class="section-meta">
-    Valores usados del Excel:
-    <strong>fondo={{ cafci_ficha.fundName|default:'-' }}</strong> |
-    <strong>cuotaparte_hoy={% if cafci_ficha.cuotaparte != None %}{{ cafci_ficha.cuotaparte|floatformat:3 }}{% else %}-{% endif %}</strong> |
-    <strong>cuotaparte_anterior={% if cafci_ficha.cuotapartePrevious != None %}{{ cafci_ficha.cuotapartePrevious|floatformat:3 }}{% else %}-{% endif %}</strong> |
-    <strong>rendimiento_diario={% if cafci_ficha.dailyReturn != None %}{{ cafci_ficha.dailyReturn|floatformat:9 }}%{% else %}-{% endif %}</strong>
-  </p>
-
-  <div class="kpi-grid">
-    <article class="kpi-card">
-      <h4>Fondo objetivo</h4>
-      <p>{{ cafci_target_name|default:'-' }}</p>
-    </article>
-    <article class="kpi-card">
-      <h4>Línea encontrada</h4>
-      <p>{{ cafci_ficha.fundName|default:'—' }}</p>
-    </article>
-    <article class="kpi-card">
-      <h4>Rendimiento diario actual</h4>
-      <p>{% if cafci_ficha and cafci_ficha.dailyReturn != None %}{{ cafci_ficha.dailyReturn|floatformat:6 }}%{% else %}-{% endif %}</p>
-    </article>
-    <article class="kpi-card">
-      <h4>Fecha del dato diario</h4>
-      <p>{% if cafci_ficha and cafci_ficha.dailyDate %}{{ cafci_ficha.dailyDate|date:'d/m/Y' }}{% else %}-{% endif %}</p>
-    </article>
-  </div>
-
-  <div class="chart-kpi-grid">
-    <article class="kpi-card">
-      <h4>Cuotaparte actual</h4>
-      <p>{% if cafci_ficha and cafci_ficha.cuotaparte != None %}$ {{ cafci_ficha.cuotaparte|money_ar }}{% else %}-{% endif %}</p>
-    </article>
-    <article class="kpi-card">
-      <h4>Cuotaparte anterior</h4>
-      <p>{% if cafci_ficha and cafci_ficha.cuotapartePrevious != None %}$ {{ cafci_ficha.cuotapartePrevious|money_ar }}{% else %}-{% endif %}</p>
-    </article>
-  </div>
-
-  <p class="section-meta">Fórmula aplicada: <strong>(cuotaparte_hoy - cuotaparte_anterior) / cuotaparte_anterior</strong></p>
-
-  {% if cafci_ficha and cafci_ficha.lastUpdate %}
-    <p class="section-meta">Fecha de última actualización detectada en planilla: <strong>{{ cafci_ficha.lastUpdate|date:'d/m/Y' }}</strong></p>
-  {% endif %}
-  {% if cafci_source_ficha %}
-    <p class="section-meta">Origen de datos: <code>{{ cafci_source_ficha }}</code></p>
-  {% endif %}
-
-  <h4 class="cafci-subtitle">Línea cargada desde la planilla</h4>
+  <h4 class="cafci-subtitle">Cuota diaria de fondos 1822 Raices</h4>
   <div class="table-wrap short">
     <table>
       <thead>
         <tr>
-          <th>Campo</th>
-          <th>Valor</th>
+          <th>Fondo solicitado</th>
+          <th>Fondo encontrado</th>
+          <th>Fecha</th>
+          <th>Cuotaparte actual</th>
+          <th>Cuotaparte anterior</th>
+          <th>Rendimiento diario</th>
         </tr>
       </thead>
       <tbody>
-        {% for item in cafci_daily_info_items %}
+        {% for fund in cafci_fund_rows %}
           <tr>
-            <td>{{ item.campo }}</td>
-            <td>{{ item.valor }}</td>
+            <td>{{ fund.requested_name }}</td>
+            <td>{{ fund.fund_name|default:'—' }}</td>
+            <td>{% if fund.daily_date %}{{ fund.daily_date|date:'d/m/Y' }}{% else %}-{% endif %}</td>
+            <td>{% if fund.cuotaparte != None %}$ {{ fund.cuotaparte|money_ar }}{% else %}-{% endif %}</td>
+            <td>{% if fund.cuotaparte_previous != None %}$ {{ fund.cuotaparte_previous|money_ar }}{% else %}-{% endif %}</td>
+            <td>{% if fund.daily_return != None %}{{ fund.daily_return|floatformat:6 }}%{% else %}-{% endif %}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="2">No hay datos diarios parseados para mostrar.</td></tr>
+          <tr><td colspan="6">No se encontraron fondos para mostrar.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -471,7 +427,7 @@
       panelContent.hidden = !expanded;
     };
 
-    setExpanded(true);
+    setExpanded(false);
     toggleButton.dataset.boundToggle = '1';
     toggleButton.addEventListener('click', () => {
       const isExpanded = toggleButton.getAttribute('aria-expanded') === 'true';
