@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
+from django.core.management import call_command
 
 from .forms import DashboardFilterForm, ExcelImportForm, ExpenseExcelImportForm, ExpenseFilterForm, ExpenseForm, IncomeEntryForm, ManualExpenseForm
 from .models import Expense, ExpenseChangeLog, FundCuotaparteHistory, IncomeEntry, Provider, Scenario
@@ -24,6 +25,7 @@ from .services.dashboard_logic import (
 )
 from .services.parsing import MONTH_NAME_ES
 from .services.excel_importer import import_excel_bytes
+from decimal import InvalidOperation
 
 
 CAFCI_CALCULATOR_FUND_ID = ""
@@ -178,6 +180,47 @@ def _compute_cuotaparte_average_daily_rate(history_points):
 	return average_rate, len(ordered)
 
 
+def _compute_geometric_daily_rate_for_fund(fund_name):
+	"""Compute geometric average daily rate from DB points for a fund.
+
+	Returns (rate_decimal, points_used) where rate_decimal is the daily
+	geometric rate as a Decimal (e.g. 0.0011) or None if not computable.
+	"""
+	try:
+		db_points = list(
+			FundCuotaparteHistory.objects.filter(fund_name=fund_name)
+			.values_list("quote_date", "cuotaparte")
+			.order_by("quote_date")
+		)
+	except (OperationalError, ProgrammingError):
+		return None, 0
+
+	points_count = len(db_points)
+	if points_count < 2:
+		return None, points_count
+
+	first_value = db_points[0][1]
+	last_value = db_points[-1][1]
+	try:
+		first_dec = Decimal(str(first_value))
+		last_dec = Decimal(str(last_value))
+	except Exception:
+		return None, points_count
+
+	if first_dec <= 0 or last_dec <= 0:
+		return None, points_count
+
+	n = points_count - 1
+	try:
+		# Use float for fractional exponent then convert back to Decimal for consistency.
+		rate_float = (float(last_dec) / float(first_dec)) ** (1.0 / n) - 1.0
+		rate_dec = Decimal(str(rate_float))
+	except Exception:
+		return None, points_count
+
+	return rate_dec, points_count
+
+
 def _build_1822_estimated_rate(rows):
 	normalized_target = _normalize_text(CAFCI_CALCULATOR_FUND_NAME)
 	history_points = list(CAFCI_1822_BASE_HISTORY)
@@ -289,12 +332,14 @@ def _build_cafci_context(request):
 
 	for fund_name in CAFCI_DAILY_FUND_NAMES:
 		try:
+			# Use local-only planilla to avoid live network calls on each request.
 			snapshot = build_cafci_snapshot(
 				fund="",
 				fund_class="",
 				fund_name=fund_name,
 				start_date=today,
 				end_date=today,
+				local_only=True,
 			)
 			ficha = snapshot.get("ficha") or {}
 			found_name = ficha.get("fundName") or fund_name
@@ -346,20 +391,44 @@ def _build_cafci_context(request):
 				break
 
 	estimated_rate_decimal, points_used = _build_1822_estimated_rate(rows)
+	# Also compute a recent 7-day average from DB if available and prefer it
+	recent_rate_decimal, recent_points = _compute_recent_7day_rate()
+	# Compute geometric average daily rate using all DB history points for the target fund
+	geometric_rate_decimal, geometric_points = _compute_geometric_daily_rate_for_fund(CAFCI_CALCULATOR_FUND_NAME)
 	estimated_rate_pct = None
 	if estimated_rate_decimal is not None:
 		estimated_rate_pct = estimated_rate_decimal * Decimal("100")
 
 	for row in rows:
 		fund_name = row.get("fund_name") or row.get("requested_name") or ""
-		if _normalize_text(fund_name).find(normalized_target) >= 0 and estimated_rate_pct is not None:
-			row["estimated_avg_return_pct"] = estimated_rate_pct
+		# Prefer the geometric rate (full history) when available, else recent 7-day, else broader estimate
+		if _normalize_text(fund_name).find(normalized_target) >= 0:
+			if geometric_rate_decimal is not None and geometric_points >= 2:
+				row["estimated_avg_return_pct"] = geometric_rate_decimal * Decimal("100")
+			elif recent_rate_decimal is not None and recent_points >= 2:
+				row["estimated_avg_return_pct"] = recent_rate_decimal * Decimal("100")
+			elif estimated_rate_pct is not None:
+				row["estimated_avg_return_pct"] = estimated_rate_pct
+			else:
+				row["estimated_avg_return_pct"] = None
 		else:
 			row["estimated_avg_return_pct"] = None
 
 	basic_context["cafci_fund_rows"] = rows
 	basic_context["cafci_local_updated_at"] = timezone.localtime(timezone.now()) if rows else None
 	basic_context["cafci_1822_estimated_rate_decimal"] = estimated_rate_decimal
+	basic_context["cafci_1822_7day_rate_decimal"] = recent_rate_decimal
+	basic_context["cafci_1822_7day_points_used"] = recent_points
+	basic_context["cafci_1822_geometric_rate_decimal"] = geometric_rate_decimal
+	basic_context["cafci_1822_geometric_points_used"] = geometric_points
+	# Also expose geometric rate as percentage for easier template rendering
+	if geometric_rate_decimal is not None:
+		try:
+			basic_context["cafci_1822_geometric_rate_pct"] = float(geometric_rate_decimal * Decimal("100"))
+		except Exception:
+			basic_context["cafci_1822_geometric_rate_pct"] = None
+	else:
+		basic_context["cafci_1822_geometric_rate_pct"] = None
 	basic_context["cafci_1822_estimated_rate_pct"] = estimated_rate_pct
 	basic_context["cafci_1822_points_used"] = points_used
 
@@ -384,6 +453,26 @@ def _build_cafci_context(request):
 		basic_context["cafci_error"] = "No se encontraron los fondos solicitados en la planilla diaria de CAFCI."
 
 	return basic_context
+
+
+def _compute_recent_7day_rate():
+	"""Compute average daily return using up to the last 7 calendar days of DB points.
+
+	Returns tuple (average_decimal, points_used).
+	"""
+	try:
+		cutoff = date.today() - timedelta(days=7)
+		db_points = list(
+			FundCuotaparteHistory.objects.filter(fund_name=CAFCI_CALCULATOR_FUND_NAME, quote_date__gte=cutoff)
+			.values_list("quote_date", "cuotaparte")
+		)
+	except (OperationalError, ProgrammingError):
+		db_points = []
+
+	if not db_points:
+		return None, 0
+
+	return _compute_cuotaparte_average_daily_rate(db_points)
 
 
 @login_required
@@ -519,7 +608,12 @@ def dashboard_home(request):
 	}
 	context.update(_build_cafci_context(request))
 
-	estimated_rate_decimal = context.get("cafci_1822_estimated_rate_decimal")
+	# Prefer the geometric average (full history) when available, else recent 7-day, else broader estimate.
+	estimated_rate_decimal = (
+		context.get("cafci_1822_geometric_rate_decimal")
+		or context.get("cafci_1822_7day_rate_decimal")
+		or context.get("cafci_1822_estimated_rate_decimal")
+	)
 	if estimated_rate_decimal is not None:
 		context["daily_rate_pct"] = float(estimated_rate_decimal * Decimal("100"))
 		context["daily_rate_pct_input"] = f"{(estimated_rate_decimal * Decimal('100')):.4f}"
@@ -816,3 +910,72 @@ def import_excel_view(request):
 		form = ExcelImportForm()
 
 	return render(request, "dashboard/import_excel.html", {"form": form})
+
+
+@login_required
+@user_passes_test(lambda u: u.is_staff)
+def cafci_manual_history(request):
+	"""Allow staff to submit up to 7 historical (date, cuotaparte) points for the target fund.
+
+	The form accepts inputs named `date_1..date_7` and `value_1..value_7` (POST).
+	Each valid pair is persisted with `update_or_create` into `FundCuotaparteHistory`.
+	"""
+	if request.method == "POST":
+		created = 0
+		updated = 0
+		errors = []
+		for i in range(1, 8):
+			raw_date = (request.POST.get(f"date_{i}") or "").strip()
+			raw_value = (request.POST.get(f"value_{i}") or "").strip()
+			if not raw_date or not raw_value:
+				continue
+			parsed_date = _parse_history_date(raw_date)
+			if parsed_date is None:
+				errors.append(f"Fecha inválida: {raw_date}")
+				continue
+			try:
+				parsed_value = Decimal(raw_value.replace(",", "."))
+			except (InvalidOperation, ValueError):
+				errors.append(f"Valor inválido: {raw_value}")
+				continue
+			try:
+				obj, created_flag = FundCuotaparteHistory.objects.update_or_create(
+					fund_name=CAFCI_CALCULATOR_FUND_NAME,
+					quote_date=parsed_date,
+					defaults={"cuotaparte": parsed_value},
+				)
+				if created_flag:
+					created += 1
+				else:
+					updated += 1
+			except Exception as exc:
+				errors.append(str(exc))
+
+		if errors:
+			messages.error(request, "Errores: " + "; ".join(errors))
+		else:
+			messages.success(request, f"Historial guardado. Nuevos: {created} · Actualizados: {updated}")
+		return redirect("dashboard:home")
+
+	# GET: render simple form
+	return render(request, "dashboard/cafci_manual_history.html", {})
+
+
+@login_required
+@user_passes_test(lambda u: u.is_staff)
+@require_POST
+def cafci_update(request):
+	"""Trigger a download+ingest of the CAFCI planilla (protected POST).
+
+	Runs the management commands `download_cafci_planilla` and
+	`ingest_cafci_planilla` and redirects back to the dashboard with a
+	success/error message.
+	"""
+	try:
+		call_command("download_cafci_planilla")
+		call_command("ingest_cafci_planilla")
+	except Exception as exc:
+		messages.error(request, f"Error al actualizar CAFCI: {exc}")
+	else:
+		messages.success(request, "Actualización CAFCI completada.")
+	return redirect("dashboard:home")

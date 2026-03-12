@@ -1,0 +1,70 @@
+Resumen del programa y cómo resolver las descargas diarias de la planilla CAFCI
+
+1) Qué hace la aplicación
+- Es un dashboard Django para proyecciones financieras que importa planillas Excel y muestra proyecciones e ingresos/gastos.
+- Integra datos de CAFCI (planilla diaria) para obtener valores de "cuotaparte" y rendimiento diario y mostrarlos en la UI.
+
+2) Componentes relevantes (rutas en el repo)
+- `dashboard/services/cafci_api.py`: descarga la planilla CAFCI desde https://api.pub.cafci.org.ar/pb_get, maneja SSL (con fallback a certifi) y parsea el Excel con pandas. Función clave: `_extract_planilla_daily_row` y `_get_bytes`.
+- `dashboard/management/commands/download_cafci_planilla.py`: (añadido) comando para descargar la planilla y guardarla en disco; se puede ejecutar manualmente o desde el Programador de Tareas.
+- `dashboard/services/excel_importer.py`: lógica para importar Excel de proyección (transformar filas en registros DB).
+- `dashboard/management/commands/import_excel_data.py`: comando para importar una planilla local al modelo de la app.
+- `dashboard/views.py`: `build_cafci_snapshot` y `_build_cafci_context` usan la planilla/servicios para construir datos mostrados en la página principal; en caso de error muestra mensajes como "No se pudo conectar..." o "No se encontraron los fondos...".
+- `dashboard/models.py`: `FundCuotaparteHistory` persiste cotizaciones históricas (útil para calcular promedios locales).
+
+3) Comportamiento actual relacionado con descargas
+- Por defecto la app intenta descargar la planilla en cada ejecución que necesita los datos (peticiones a CAFCI). Esto puede fallar por SSL o conectividad.
+- Se añadió soporte para usar una copia local de la planilla: la variable de entorno `CAFCI_LOCAL_PLANILLA_PATH` (si está definida y el archivo existe, se usa ese .xlsx en lugar de descargar).
+- Se añadió el comando `python manage.py download_cafci_planilla` que descarga y guarda el archivo en disco (ruta por argumento o por `CAFCI_LOCAL_PLANILLA_PATH`, por defecto `./data/cafci_planilla.xlsx`).
+
+4) Recomendación para garantizar que todas las PCs vean datos actualizados todos los días
+Opción A (recomendada, sin depender de peticiones en vivo):
+- Configurar una tarea diaria en Windows Task Scheduler en la máquina servidor (la que corre Django) para ejecutar:
+  C:\ruta\a\python.exe manage.py download_cafci_planilla --path "C:\ruta\al\repo\data\cafci_planilla.xlsx"
+- Establecer la variable de entorno `CAFCI_LOCAL_PLANILLA_PATH` apuntando a esa ruta (o pasar `--path` siempre). La app usará el archivo local cuando exista.
+- Ventajas: si CAFCI tiene problemas o la red cae, la UI sigue mostrando la última planilla descargada; las otras PCs solo consultan el servidor Django para obtener datos (no necesitan acceso externo).
+
+Opción B (alternativa): que la app descargue dinámicamente en cada petición, pero eso depende de la conexión y puede provocar latencia/errores si CAFCI no responde. Mantener la lógica actual + fallback local es útil.
+
+5) Ejemplo de configuración de la tarea en Windows (resumen paso a paso)
+- Abrir "Task Scheduler" → Create Task.
+- En "General": ejecutar con un usuario con permisos y marcar "Run whether user is logged on or not" y "Run with highest privileges" si necesita permisos.
+- Triggers → New → Daily → elegir hora.
+- Actions → New → Program/script: ruta a `python.exe` (por ejemplo `C:\Users\usuario\.venv\Scripts\python.exe` o `C:\PythonXX\python.exe`).
+  Arguments: `manage.py download_cafci_planilla --path "C:\Users\usuario\Documents\GitHub\proyeccion_app_django\data\cafci_planilla.xlsx"`
+  Start in: `C:\Users\usuario\Documents\GitHub\proyeccion_app_django`
+- Conditions/Settings: desactivar "Stop if the computer switches to battery" si es portátil.
+- Guardar y probar con "Run".
+
+6) Variables de entorno útiles y opciones de SSL
+- `CAFCI_LOCAL_PLANILLA_PATH`: ruta al .xlsx que la app debe usar si existe.
+- `CAFCI_SSL_VERIFY`: si se pone `false` la app desactiva verificación SSL (no recomendado salvo pruebas).
+- `CAFCI_CA_BUNDLE`: ruta a un bundle de CA si necesitas usar certificados personalizados.
+
+7) Comandos de prueba y diagnóstico
+- Descargar manualmente (PowerShell desde el servidor):
+  curl -v https://api.pub.cafci.org.ar/pb_get --output planilla_pb_get.xlsx
+  o
+  Invoke-WebRequest -Uri "https://api.pub.cafci.org.ar/pb_get" -OutFile "planilla_pb_get.xlsx"
+- Ejecutar comando de management manualmente:
+  python manage.py download_cafci_planilla --path "data\cafci_planilla.xlsx"
+- Ver primeras filas con Python:
+  python -c "import pandas as pd; df=pd.read_excel('data/cafci_planilla.xlsx', sheet_name=0, header=None); print(df.head(15).to_string())"
+- Ejecutar servidor Django (si quieres que otros accedan al dashboard):
+  python manage.py runserver 0.0.0.0:8000
+
+8) Qué revisar si algo falla
+- Salida/traceback en la terminal donde corre `runserver`.
+- Mensajes en la UI (se muestran errores de CAFCI en la sección correspondiente).
+- Permisos de escritura en la carpeta donde se guarda la planilla.
+- Perfil de red de Windows (debe ser "Private" si quieres aceptar conexiones entrantes desde la LAN).
+- Firewall: permitir conexiones entrantes al puerto donde corre Django o permitir a `python.exe`.
+- Certificados SSL: si hay error de verificación, usar `CAFCI_CA_BUNDLE` o `CAFCI_SSL_VERIFY=false` temporalmente para diagnóstico.
+
+9) Sugerencia para compartir con ChatGPT (qué pedir)
+- Pide pasos para crear la tarea programada en Windows con el usuario y rutas exactas.
+- Pide cómo asegurar que la app lea `CAFCI_LOCAL_PLANILLA_PATH` como variable de entorno en tu entorno de producción (por ejemplo en el servicio que inicie Django).
+- Pide verificación de que `dashboard/services/cafci_api.py` usa correctamente el archivo local y tiene manejo de errores (puedo pegar ese fragmento de código si lo necesitás).
+
+---
+Si querés, creo un ejemplo de script .ps1 para la tarea programada o te guío paso a paso para crear la tarea ahora. También puedo pegar el fragmento de `cafci_api.py` modificado para que lo pegues en ChatGPT si lo necesitas.

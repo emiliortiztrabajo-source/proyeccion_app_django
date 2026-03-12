@@ -15,4 +15,6 @@ urlpatterns = [
     path("ingresos/nuevo/", views.income_create, name="income_create"),
     path("ingresos/<int:pk>/editar/", views.income_edit, name="income_edit"),
     path("importar-excel/", views.import_excel_view, name="import_excel"),
+    path("cafci/update/", views.cafci_update, name="cafci_update"),
+    path("cafci/manual-history/", views.cafci_manual_history, name="cafci_manual_history"),
 ]
