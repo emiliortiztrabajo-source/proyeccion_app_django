@@ -57,7 +57,7 @@ class Command(BaseCommand):
                 obj, created = FundCuotaparteHistory.objects.update_or_create(
                     fund_name=found_name,
                     quote_date=fecha,
-                    defaults={"cuotaparte": cuotaparte},
+                        defaults={"cuotaparte": cuotaparte, "is_from_excel": True},
                 )
                 saved += 1
                 verb = "Creado" if created else "Actualizado"
