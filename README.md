@@ -43,6 +43,28 @@ python manage.py import_excel_data --path "PROYECCION 2026 (4).xlsx" --scenario 
 python manage.py runserver
 ```
 
+## CAFCI en otra PC (SSL/TLS)
+Si en una maquina funciona CAFCI y en otra aparece error SSL/TLS, actualiza dependencias y proba estas opciones:
+
+1. Reinstalar dependencias (incluye `certifi`):
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Si tu red usa certificado corporativo/intermedio, indicar bundle CA:
+   ```bash
+   # PowerShell
+   $env:CAFCI_CA_BUNDLE="C:\ruta\certificados\ca-bundle.pem"
+   python manage.py runserver
+   ```
+3. Solo para diagnostico local (no recomendado en produccion), desactivar verificacion SSL:
+   ```bash
+   # PowerShell
+   $env:CAFCI_SSL_VERIFY="false"
+   python manage.py runserver
+   ```
+
+La app ahora reintenta automaticamente con el bundle de `certifi` cuando falla la verificacion del store del sistema.
+
 ## Despliegue por Git a servidor (incluyendo datos)
 Este proyecto esta preparado para desarrollo local con SQLite y despliegue en servidor con PostgreSQL.
 
