@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 try {
     Push-Location $RepoPath
 } catch {
-    Write-Error "No se pudo entrar a $RepoPath: $_"
+    Write-Error "No se pudo entrar a ${RepoPath}: $_"
     exit 2
 }
 
@@ -28,15 +28,19 @@ $currentFile = Join-Path $DataDir "cafci_planilla.xlsx"
 $logFile = Join-Path $LogDir ("cafci_$date.log")
 
 function Run-Cmd {
-    param($exe, $args)
-    $cmd = & $exe $args 2>&1 | Tee-Object -FilePath $logFile -Append
-    return $LASTEXITCODE
+        param(
+            [string]$exe,
+            [string[]]$Args
+        )
+        Write-Output ("[DEBUG] Ejecutando: {0} {1}" -f $exe, ($Args -join ' ')) | Tee-Object -FilePath $logFile -Append
+        $output = & $exe @Args 2>&1 | Tee-Object -FilePath $logFile -Append
+        return $LASTEXITCODE
 }
 
 # 1) Descargar planilla fechada
 Write-Output "[INFO] Descargando planilla CAFCI a $datedFile" | Tee-Object -FilePath $logFile -Append
-$downloadArgs = "manage.py download_cafci_planilla --path `"$datedFile`""
-$rc = Run-Cmd $PythonExe $downloadArgs
+$downloadArgs = @("manage.py","download_cafci_planilla","--path",$datedFile)
+$rc = Run-Cmd $PythonExe @downloadArgs
 if ($rc -ne 0) {
     Write-Error "Error descargando planilla (rc=$rc). Ver $logFile" | Tee-Object -FilePath $logFile -Append
     Pop-Location
@@ -53,8 +57,8 @@ try {
 
 # 3) Ingest a DB (usa la planilla fechada)
 Write-Output "[INFO] Ejecutando ingest a DB usando $datedFile" | Tee-Object -FilePath $logFile -Append
-$ingestArgs = "manage.py ingest_cafci_planilla --path `"$datedFile`""
-$rc = Run-Cmd $PythonExe $ingestArgs
+$ingestArgs = @("manage.py","ingest_cafci_planilla","--path",$datedFile)
+$rc = Run-Cmd $PythonExe @ingestArgs
 if ($rc -ne 0) {
     Write-Error "Error en ingest (rc=$rc). Ver $logFile" | Tee-Object -FilePath $logFile -Append
     Pop-Location
