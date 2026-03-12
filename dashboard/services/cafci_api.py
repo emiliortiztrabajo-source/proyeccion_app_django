@@ -177,6 +177,13 @@ def _extract_other_returns(rendimientos_node: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _resolve_local_planilla_path() -> str:
+    configured = os.getenv("CAFCI_LOCAL_PLANILLA_PATH", "").strip()
+    if configured:
+        return configured
+    return os.path.join(os.getcwd(), "data", "cafci_planilla.xlsx")
+
+
 def _build_request(url: str) -> Request:
     return Request(
         url,
@@ -309,7 +316,7 @@ def _find_planilla_header_row(raw_df: pd.DataFrame) -> int | None:
 
 def _extract_planilla_daily_row(*, fund: str, fund_class: str, fund_name: str | None = None) -> dict[str, Any] | None:
     # Prefer a locally cached planilla when available to avoid network issues.
-    local_path = os.getenv("CAFCI_LOCAL_PLANILLA_PATH", "").strip()
+    local_path = _resolve_local_planilla_path()
     if local_path and os.path.exists(local_path):
         with open(local_path, "rb") as fh:
             binary = fh.read()
@@ -397,7 +404,7 @@ def _extract_planilla_daily_row(*, fund: str, fund_class: str, fund_name: str | 
 
 def _extract_planilla_daily_row_local(*, fund: str, fund_class: str, fund_name: str | None = None) -> dict[str, Any] | None:
     """Extract a planilla row using only a local cached file. Returns None if file missing or not found."""
-    local_path = os.getenv("CAFCI_LOCAL_PLANILLA_PATH", "").strip()
+    local_path = _resolve_local_planilla_path()
     if not local_path or not os.path.exists(local_path):
         return None
     try:
@@ -570,6 +577,10 @@ def build_cafci_snapshot(*, fund: str, fund_class: str, start_date: date, end_da
     else:
         planilla_row = _extract_planilla_daily_row(fund=fund, fund_class=fund_class, fund_name=fund_name)
     if not planilla_row:
+        if local_only:
+            local_path = _resolve_local_planilla_path()
+            if not os.path.exists(local_path):
+                raise CafciApiError(f"No se encontró planilla local de CAFCI en: {local_path}")
         raise CafciApiError("No se encontró la línea del fondo en la planilla diaria de CAFCI.")
 
     ficha["fundName"] = planilla_row.get("fundName")

@@ -371,12 +371,8 @@
       {% if cafci_1822_geometric_rate_pct %}
         <p class="section-meta section-meta--hint">Tasa geométrica (hist): <strong>{{ cafci_1822_geometric_rate_pct|floatformat:6 }}%</strong> — puntos: {{ cafci_1822_geometric_points_used }}</p>
       {% endif %}
-      <input type="hidden" id="server_rate_arith" value="{{ cafci_1822_series_arith_rate_decimal|default:adelanto_daily_rate_decimal }}">
-      <input type="hidden" id="server_rate_geom" value="{{ cafci_1822_series_geom_rate_decimal|default:cafci_1822_geometric_rate_decimal|default:adelanto_daily_rate_decimal }}">
-      <div id="adelantoDebug" style="font-size:0.9em;margin-top:6px;color:#cbd5e1">
-        <div>DEBUG tasas (decimales): Arith = <span id="dbgArith">{{ cafci_1822_series_arith_rate_decimal|default:adelanto_daily_rate_decimal }}</span>, Geom = <span id="dbgGeom">{{ cafci_1822_series_geom_rate_decimal|default:cafci_1822_geometric_rate_decimal|default:adelanto_daily_rate_decimal }}</span></div>
-        <div>Fuente actual: <strong id="dbgSource">{{ cafci_1822_source_mode|default:'manual' }}</strong></div>
-      </div>
+      <input type="hidden" id="server_rate_arith" value="{{ cafci_1822_series_arith_rate_decimal_str|default:adelanto_daily_rate_decimal }}">
+      <input type="hidden" id="server_rate_geom" value="{{ cafci_1822_series_geom_rate_decimal_str|default:adelanto_daily_rate_decimal }}">
       <div class="calc-actions">
         <button type="button" class="btn-primary" data-rate-decimal="{{ adelanto_daily_rate_decimal }}" onclick="calcAdelantoFromButton(this)">Calcular</button>
       </div>

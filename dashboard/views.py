@@ -129,6 +129,28 @@ def _parse_history_date(raw_value):
 	return None
 
 
+def _sanitize_rate_decimal(value):
+	if value is None:
+		return None
+	try:
+		parsed = Decimal(str(value))
+	except Exception:
+		return None
+	if not parsed.is_finite() or parsed.is_nan():
+		return None
+	return parsed
+
+
+def _rate_decimal_to_plain_string(value):
+	parsed = _sanitize_rate_decimal(value)
+	if parsed is None:
+		return ""
+	text = format(parsed, "f")
+	if "." in text:
+		text = text.rstrip("0").rstrip(".")
+	return text or "0"
+
+
 def _compute_cuotaparte_average_daily_rate(history_points):
 	def _normalize_quote_value(raw_value):
 		try:
@@ -467,15 +489,26 @@ def _build_cafci_context(request):
 	arith_rate_decimal, arith_points = _compute_cuotaparte_average_daily_rate(series_points)
 	# Geometric rate from series
 	geom_rate_decimal, geom_points = _compute_geometric_from_points(series_points)
+	estimated_rate_decimal = _sanitize_rate_decimal(estimated_rate_decimal)
+	recent_rate_decimal = _sanitize_rate_decimal(recent_rate_decimal)
+	geometric_rate_decimal = _sanitize_rate_decimal(geometric_rate_decimal)
+	arith_rate_decimal = _sanitize_rate_decimal(arith_rate_decimal)
+	geom_rate_decimal = _sanitize_rate_decimal(geom_rate_decimal)
 	estimated_rate_pct = None
 	if estimated_rate_decimal is not None:
 		estimated_rate_pct = estimated_rate_decimal * Decimal("100")
+	series_arith_pct = arith_rate_decimal * Decimal("100") if arith_rate_decimal is not None else None
+	series_geom_pct = geom_rate_decimal * Decimal("100") if geom_rate_decimal is not None else None
 
 	for row in rows:
 		fund_name = row.get("fund_name") or row.get("requested_name") or ""
-		# Prefer the geometric rate (full history) when available, else recent 7-day, else broader estimate
+		# Keep displayed estimated average consistent with the active source series first.
 		if _normalize_text(fund_name).find(normalized_target) >= 0:
-			if geometric_rate_decimal is not None and geometric_points >= 2:
+			if series_arith_pct is not None and arith_points >= 2:
+				row["estimated_avg_return_pct"] = series_arith_pct
+			elif series_geom_pct is not None and geom_points >= 2:
+				row["estimated_avg_return_pct"] = series_geom_pct
+			elif geometric_rate_decimal is not None and geometric_points >= 2:
 				row["estimated_avg_return_pct"] = geometric_rate_decimal * Decimal("100")
 			elif recent_rate_decimal is not None and recent_points >= 2:
 				row["estimated_avg_return_pct"] = recent_rate_decimal * Decimal("100")
@@ -491,17 +524,21 @@ def _build_cafci_context(request):
 	basic_context["cafci_1822_estimated_rate_decimal"] = estimated_rate_decimal
 	basic_context["cafci_1822_7day_rate_decimal"] = recent_rate_decimal
 	basic_context["cafci_1822_7day_points_used"] = recent_points
-	basic_context["cafci_1822_geometric_rate_decimal"] = geometric_rate_decimal
-	basic_context["cafci_1822_geometric_points_used"] = geometric_points
+	basic_context["cafci_1822_history_geom_rate_decimal"] = geometric_rate_decimal
+	basic_context["cafci_1822_history_geom_points_used"] = geometric_points
 	basic_context["cafci_1822_source_mode"] = source_mode
 	basic_context["cafci_1822_series_arith_rate_decimal"] = arith_rate_decimal
 	basic_context["cafci_1822_series_arith_points"] = arith_points
 	basic_context["cafci_1822_series_geom_rate_decimal"] = geom_rate_decimal
 	basic_context["cafci_1822_series_geom_points"] = geom_points
+	basic_context["cafci_1822_series_arith_rate_decimal_str"] = _rate_decimal_to_plain_string(arith_rate_decimal)
+	basic_context["cafci_1822_series_geom_rate_decimal_str"] = _rate_decimal_to_plain_string(geom_rate_decimal)
+	basic_context["cafci_1822_geometric_rate_decimal"] = geom_rate_decimal
+	basic_context["cafci_1822_geometric_points_used"] = geom_points
 	# Also expose geometric rate as percentage for easier template rendering
-	if geometric_rate_decimal is not None:
+	if geom_rate_decimal is not None:
 		try:
-			basic_context["cafci_1822_geometric_rate_pct"] = float(geometric_rate_decimal * Decimal("100"))
+			basic_context["cafci_1822_geometric_rate_pct"] = float(geom_rate_decimal * Decimal("100"))
 		except Exception:
 			basic_context["cafci_1822_geometric_rate_pct"] = None
 	else:
@@ -685,12 +722,15 @@ def dashboard_home(request):
 	}
 	context.update(_build_cafci_context(request))
 
-	# Prefer the geometric average (full history) when available, else recent 7-day, else broader estimate.
-	estimated_rate_decimal = (
-		context.get("cafci_1822_geometric_rate_decimal")
-		or context.get("cafci_1822_7day_rate_decimal")
-		or context.get("cafci_1822_estimated_rate_decimal")
-	)
+	# Keep default displayed rate aligned with source series first (manual/excel), then fall back.
+	preferred_rates = [
+		_sanitize_rate_decimal(context.get("cafci_1822_series_arith_rate_decimal")),
+		_sanitize_rate_decimal(context.get("cafci_1822_series_geom_rate_decimal")),
+		_sanitize_rate_decimal(context.get("cafci_1822_geometric_rate_decimal")),
+		_sanitize_rate_decimal(context.get("cafci_1822_7day_rate_decimal")),
+		_sanitize_rate_decimal(context.get("cafci_1822_estimated_rate_decimal")),
+	]
+	estimated_rate_decimal = next((r for r in preferred_rates if r is not None), None)
 	if estimated_rate_decimal is not None:
 		context["daily_rate_pct"] = float(estimated_rate_decimal * Decimal("100"))
 		context["daily_rate_pct_input"] = f"{(estimated_rate_decimal * Decimal('100')):.4f}"
@@ -699,10 +739,16 @@ def dashboard_home(request):
 		cafci_ficha = context.get("cafci_ficha") or {}
 		cafci_daily_return_pct = cafci_ficha.get("dailyReturn")
 		if cafci_daily_return_pct is not None:
-			rate_decimal = (Decimal(cafci_daily_return_pct) / Decimal("100"))
-			context["daily_rate_pct"] = float(Decimal(cafci_daily_return_pct))
-			context["daily_rate_pct_input"] = f"{Decimal(cafci_daily_return_pct):.4f}"
-			context["adelanto_daily_rate_decimal"] = f"{rate_decimal:.10f}".rstrip("0").rstrip(".")
+			try:
+				rate_pct_decimal = Decimal(cafci_daily_return_pct)
+				rate_decimal = _sanitize_rate_decimal(rate_pct_decimal / Decimal("100"))
+			except Exception:
+				rate_decimal = None
+				rate_pct_decimal = None
+			if rate_decimal is not None and rate_pct_decimal is not None:
+				context["daily_rate_pct"] = float(rate_pct_decimal)
+				context["daily_rate_pct_input"] = f"{rate_pct_decimal:.4f}"
+				context["adelanto_daily_rate_decimal"] = f"{rate_decimal:.10f}".rstrip("0").rstrip(".")
 
 	return render(request, "dashboard/home.html", context)
 
