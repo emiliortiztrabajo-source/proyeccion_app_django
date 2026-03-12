@@ -308,7 +308,15 @@ def _find_planilla_header_row(raw_df: pd.DataFrame) -> int | None:
 
 
 def _extract_planilla_daily_row(*, fund: str, fund_class: str, fund_name: str | None = None) -> dict[str, Any] | None:
-    binary = _get_bytes(CAFCI_PB_GET_URL)
+    # Prefer a locally cached planilla when available to avoid network issues.
+    local_path = os.getenv("CAFCI_LOCAL_PLANILLA_PATH", "").strip()
+    if local_path and os.path.exists(local_path):
+        with open(local_path, "rb") as fh:
+            binary = fh.read()
+    else:
+        # by default download remote; callers that must avoid network should
+        # call `build_cafci_snapshot(..., local_only=True)` which prevents remote calls.
+        binary = _get_bytes(CAFCI_PB_GET_URL)
     raw_df = pd.read_excel(io.BytesIO(binary), sheet_name=0, header=None)
 
     # The daily CAFCI sheet consistently starts data rows at index 9.
@@ -387,6 +395,94 @@ def _extract_planilla_daily_row(*, fund: str, fund_class: str, fund_name: str | 
     return None
 
 
+def _extract_planilla_daily_row_local(*, fund: str, fund_class: str, fund_name: str | None = None) -> dict[str, Any] | None:
+    """Extract a planilla row using only a local cached file. Returns None if file missing or not found."""
+    local_path = os.getenv("CAFCI_LOCAL_PLANILLA_PATH", "").strip()
+    if not local_path or not os.path.exists(local_path):
+        return None
+    try:
+        with open(local_path, "rb") as fh:
+            binary = fh.read()
+    except Exception:
+        return None
+
+    try:
+        raw_df = pd.read_excel(io.BytesIO(binary), sheet_name=0, header=None)
+    except Exception:
+        return None
+
+    data_df = raw_df.iloc[9:].copy()
+    if data_df.empty:
+        return None
+    data_df = data_df.reset_index(drop=True)
+
+    col_fondo = 0
+    col_fecha = 4
+    col_cuotaparte_actual = 5
+    col_cuotaparte_anterior = 6
+    col_variacion_pct = 7
+    col_codigo_cafci = 20
+
+    target_codes = [str(fund).strip(), str(fund_class).strip()]
+    target_codes = [c for c in target_codes if c]
+
+    candidates = data_df[data_df[col_codigo_cafci].notna()].copy()
+    if candidates.empty:
+        return None
+
+    candidates["__codigo_cafci_str"] = candidates[col_codigo_cafci].astype(str).str.strip()
+
+    for code in target_codes:
+        matched = candidates[candidates["__codigo_cafci_str"] == code]
+        if matched.empty:
+            continue
+
+        row = matched.iloc[0]
+        actual = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_actual)))
+        previous = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_anterior)))
+        computed_daily_return = None
+        if actual is not None and previous not in (None, Decimal("0")):
+            computed_daily_return = ((actual - previous) / previous) * Decimal("100")
+        return {
+            "fundName": _as_text(row.get(col_fondo)),
+            "dailyDate": _normalize_date(row.get(col_fecha)),
+            "cuotaparte": actual,
+            "cuotapartePrevious": previous,
+            "dailyReturn": computed_daily_return if computed_daily_return is not None else _normalize_decimal(row.get(col_variacion_pct)),
+            "dailyReturnSource": "formula" if computed_daily_return is not None else "variac_pct",
+            "codigoCafci": code,
+            "source": "local",
+        }
+
+    if fund_name:
+        normalized_target = _normalize_label_text(fund_name)
+        if normalized_target:
+            candidates["__fondo_norm"] = candidates[col_fondo].apply(_normalize_label_text)
+            by_name = candidates[candidates["__fondo_norm"].str.contains(normalized_target, na=False)]
+            if by_name.empty:
+                by_name = candidates[candidates["__fondo_norm"].apply(lambda x: normalized_target in x or x in normalized_target)]
+
+            if not by_name.empty:
+                row = by_name.iloc[0]
+                actual = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_actual)))
+                previous = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_anterior)))
+                computed_daily_return = None
+                if actual is not None and previous not in (None, Decimal("0")):
+                    computed_daily_return = ((actual - previous) / previous) * Decimal("100")
+                return {
+                    "fundName": _as_text(row.get(col_fondo)),
+                    "dailyDate": _normalize_date(row.get(col_fecha)),
+                    "cuotaparte": actual,
+                    "cuotapartePrevious": previous,
+                    "dailyReturn": computed_daily_return if computed_daily_return is not None else _normalize_decimal(row.get(col_variacion_pct)),
+                    "dailyReturnSource": "formula" if computed_daily_return is not None else "variac_pct",
+                    "codigoCafci": _as_text(row.get(col_codigo_cafci)),
+                    "source": "local",
+                }
+
+    return None
+
+
 def get_fund_class_ficha(fund: str, fund_class: str) -> dict[str, Any]:
     url = f"{CAFCI_API_BASE_URL}/fondo/{fund}/clase/{fund_class}/ficha"
     payload = _get_json(url)
@@ -457,7 +553,7 @@ def parse_performance_payload(payload: dict[str, Any], *, source_url: str, start
     }
 
 
-def build_cafci_snapshot(*, fund: str, fund_class: str, start_date: date, end_date: date, fund_name: str | None = None) -> dict[str, Any]:
+def build_cafci_snapshot(*, fund: str, fund_class: str, start_date: date, end_date: date, fund_name: str | None = None, local_only: bool = False) -> dict[str, Any]:
     ficha: dict[str, Any] = {
         "fund": fund,
         "fundClass": fund_class,
@@ -469,7 +565,10 @@ def build_cafci_snapshot(*, fund: str, fund_class: str, start_date: date, end_da
         "lastUpdate": None,
         "source": None,
     }
-    planilla_row = _extract_planilla_daily_row(fund=fund, fund_class=fund_class, fund_name=fund_name)
+    if local_only:
+        planilla_row = _extract_planilla_daily_row_local(fund=fund, fund_class=fund_class, fund_name=fund_name)
+    else:
+        planilla_row = _extract_planilla_daily_row(fund=fund, fund_class=fund_class, fund_name=fund_name)
     if not planilla_row:
         raise CafciApiError("No se encontró la línea del fondo en la planilla diaria de CAFCI.")
 

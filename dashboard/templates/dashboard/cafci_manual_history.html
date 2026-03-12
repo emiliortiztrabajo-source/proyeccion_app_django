@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="panel-title-row">
+    <h3>Ingresar historial CAFCI (7 días) - RAICES INVERSION</h3>
+  </div>
+  <form method="post">
+    {% csrf_token %}
+    <p>Ingresá hasta 7 filas con fecha y cuotaparte. Fecha formato ISO (YYYY-MM-DD) o DD/MM/YYYY.</p>
+    <table class="table-wrap short">
+      <thead>
+        <tr><th>#</th><th>Fecha</th><th>Cuotaparte</th></tr>
+      </thead>
+      <tbody>
+        {% for i in 1|to:7 %}
+        <tr>
+          <td>{{ i }}</td>
+          <td><input type="date" name="date_{{ i }}" class="form-control"></td>
+          <td><input type="text" name="value_{{ i }}" class="form-control" placeholder="Ej: 87.539829"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="form-actions">
+      <button type="submit" class="btn-primary">Guardar historial</button>
+      <a href="{% url 'dashboard:home' %}" class="btn-secondary">Volver</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

@@ -260,6 +260,10 @@
     <h3>Datos FCI - Planilla diaria</h3>
     <div class="panel-actions">
       <p class="section-meta section-meta--inline">Fuente principal: https://api.pub.cafci.org.ar/pb_get</p>
+      <form method="post" action="{% url 'dashboard:cafci_update' %}" style="display:inline">
+        {% csrf_token %}
+        <button type="submit" class="btn-primary">Actualizar ahora</button>
+      </form>
       <button
         id="toggleCafciPanel"
         type="button"
@@ -356,6 +360,9 @@
         </select>
       </div>
       <p class="section-meta section-meta--hint">Tasa diaria usada: <strong>{{ daily_rate_pct|floatformat:6 }}%</strong></p>
+      {% if cafci_1822_geometric_rate_pct %}
+        <p class="section-meta section-meta--hint">Tasa geométrica (hist): <strong>{{ cafci_1822_geometric_rate_pct|floatformat:6 }}%</strong> — puntos: {{ cafci_1822_geometric_points_used }}</p>
+      {% endif %}
       <div class="calc-actions">
         <button type="button" class="btn-primary" data-rate-decimal="{{ adelanto_daily_rate_decimal }}" onclick="calcAdelantoFromButton(this)">Calcular</button>
       </div>
