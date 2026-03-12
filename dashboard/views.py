@@ -221,6 +221,40 @@ def _compute_geometric_daily_rate_for_fund(fund_name):
 	return rate_dec, points_count
 
 
+def _compute_geometric_from_points(history_points):
+	"""Compute geometric daily rate from an explicit list of (date, value) points.
+
+	Returns (rate_decimal, points_used).
+	"""
+	clean_points = []
+	for d, v in history_points:
+		parsed_date = _parse_history_date(d)
+		if parsed_date is None:
+			continue
+		try:
+			val = Decimal(str(v))
+		except Exception:
+			continue
+		if val <= 0:
+			continue
+		clean_points.append((parsed_date, val))
+
+	if len(clean_points) < 2:
+		return None, len(clean_points)
+
+	ordered = sorted(clean_points, key=lambda x: x[0])
+	first_dec = ordered[0][1]
+	last_dec = ordered[-1][1]
+	n = len(ordered) - 1
+	try:
+		rate_float = (float(last_dec) / float(first_dec)) ** (1.0 / n) - 1.0
+		rate_dec = Decimal(str(rate_float))
+	except Exception:
+		return None, len(ordered)
+
+	return rate_dec, len(ordered)
+
+
 def _build_1822_estimated_rate(rows):
 	normalized_target = _normalize_text(CAFCI_CALCULATOR_FUND_NAME)
 	history_points = list(CAFCI_1822_BASE_HISTORY)
@@ -395,6 +429,44 @@ def _build_cafci_context(request):
 	recent_rate_decimal, recent_points = _compute_recent_7day_rate()
 	# Compute geometric average daily rate using all DB history points for the target fund
 	geometric_rate_decimal, geometric_points = _compute_geometric_daily_rate_for_fund(CAFCI_CALCULATOR_FUND_NAME)
+
+	# Decide data source: prefer Excel-derived series once we have >=7 excel rows
+	try:
+		excel_count = (
+			FundCuotaparteHistory.objects.filter(
+				fund_name__icontains=CAFCI_CALCULATOR_FUND_NAME,
+				is_from_excel=True,
+			)
+			.values("quote_date")
+			.distinct()
+			.count()
+		)
+	except (OperationalError, ProgrammingError):
+		excel_count = 0
+
+	source_mode = "excel" if excel_count >= 7 else "manual"
+
+	# Build the series to compute arithmetic/geometric rates according to source_mode
+	if source_mode == "excel":
+		try:
+			db_rows = list(
+				FundCuotaparteHistory.objects.filter(
+					fund_name__icontains=CAFCI_CALCULATOR_FUND_NAME,
+					is_from_excel=True,
+				)
+				.order_by("quote_date")
+				.values_list("quote_date", "cuotaparte")
+			)
+		except (OperationalError, ProgrammingError):
+			db_rows = []
+		series_points = [(r[0], r[1]) for r in db_rows]
+	else:
+		series_points = list(CAFCI_1822_BASE_HISTORY)
+
+	# Arithmetic rate from series
+	arith_rate_decimal, arith_points = _compute_cuotaparte_average_daily_rate(series_points)
+	# Geometric rate from series
+	geom_rate_decimal, geom_points = _compute_geometric_from_points(series_points)
 	estimated_rate_pct = None
 	if estimated_rate_decimal is not None:
 		estimated_rate_pct = estimated_rate_decimal * Decimal("100")
@@ -421,6 +493,11 @@ def _build_cafci_context(request):
 	basic_context["cafci_1822_7day_points_used"] = recent_points
 	basic_context["cafci_1822_geometric_rate_decimal"] = geometric_rate_decimal
 	basic_context["cafci_1822_geometric_points_used"] = geometric_points
+	basic_context["cafci_1822_source_mode"] = source_mode
+	basic_context["cafci_1822_series_arith_rate_decimal"] = arith_rate_decimal
+	basic_context["cafci_1822_series_arith_points"] = arith_points
+	basic_context["cafci_1822_series_geom_rate_decimal"] = geom_rate_decimal
+	basic_context["cafci_1822_series_geom_points"] = geom_points
 	# Also expose geometric rate as percentage for easier template rendering
 	if geometric_rate_decimal is not None:
 		try:

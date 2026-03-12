@@ -93,8 +93,57 @@ function calcAdelanto(rateDecimal) {
   `;
 }
 
+// Return selected rate decimal according to selector (server-provided defaults)
+function getSelectedRateDecimal() {
+  const metodo = document.getElementById('adelantoMetodo')?.value || 'aritmetico';
+  const arith = Number(document.getElementById('server_rate_arith')?.value || 0);
+  const geom = Number(document.getElementById('server_rate_geom')?.value || 0);
+  return metodo === 'geometrico' ? geom : arith;
+}
+
+// Update meta display (method name and shown rate)
+function updateAdelantoMetaDisplay() {
+  const metodoEl = document.getElementById('adelantoMetodo');
+  const metodoMeta = document.getElementById('metaMetodo');
+  const tasaMeta = document.getElementById('metaTasa');
+  if (!metodoEl || !metodoMeta || !tasaMeta) return;
+  const metodo = metodoEl.value;
+  const rate = getSelectedRateDecimal();
+  metodoMeta.textContent = metodo === 'geometrico' ? 'Geométrico' : 'Aritmético';
+  tasaMeta.textContent = (rate * 100).toFixed(6) + '%';
+  // Debug logging and visible debug update
+  try {
+    const arith = Number(document.getElementById('server_rate_arith')?.value || 0);
+    const geom = Number(document.getElementById('server_rate_geom')?.value || 0);
+    console.log('Adelanto rates - arith:', arith, 'geom:', geom, 'selected:', metodo);
+    const dbgAr = document.getElementById('dbgArith');
+    const dbgGm = document.getElementById('dbgGeom');
+    const dbgSrc = document.getElementById('dbgSource');
+    if (dbgAr) dbgAr.textContent = String(arith);
+    if (dbgGm) dbgGm.textContent = String(geom);
+    if (dbgSrc) dbgSrc.textContent = document.getElementById('metaFuente') ? document.getElementById('metaFuente').textContent : '';
+  } catch (e) {
+    console.warn('Debug update failed', e);
+  }
+}
+
+// Initialize selector behaviour
+function initAdelantoMethodToggle() {
+  const metodoEl = document.getElementById('adelantoMetodo');
+  if (!metodoEl) return;
+  metodoEl.addEventListener('change', updateAdelantoMetaDisplay);
+  updateAdelantoMetaDisplay();
+}
+
+// Button handler: pick rate via selector and compute
 function calcAdelantoFromButton(button) {
-  const rateDecimal = Number(button?.dataset?.rateDecimal || 0);
+  // Ensure meta display is updated from selector before calculation
+  try {
+    updateAdelantoMetaDisplay();
+  } catch (e) {
+    console.warn('updateAdelantoMetaDisplay failed', e);
+  }
+  const rateDecimal = getSelectedRateDecimal();
   calcAdelanto(rateDecimal);
 }
 
