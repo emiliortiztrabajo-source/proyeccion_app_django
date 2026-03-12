@@ -94,10 +94,29 @@ function calcAdelanto(rateDecimal) {
 }
 
 // Return selected rate decimal according to selector (server-provided defaults)
+function readRateDecimalFromInput(inputId, fallbackValue = 0) {
+  const raw = document.getElementById(inputId)?.value;
+  let parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    const text = String(raw ?? '').trim();
+    let normalized = text.replace(/\s/g, '');
+    if (normalized.includes(',') && normalized.includes('.')) {
+      // es-AR style with thousands dot + decimal comma
+      normalized = normalized.replace(/\./g, '').replace(',', '.');
+    } else if (normalized.includes(',')) {
+      normalized = normalized.replace(',', '.');
+    }
+    parsed = Number(normalized);
+  }
+  if (Number.isFinite(parsed)) return parsed;
+  return Number(fallbackValue || 0);
+}
+
 function getSelectedRateDecimal() {
   const metodo = document.getElementById('adelantoMetodo')?.value || 'aritmetico';
-  const arith = Number(document.getElementById('server_rate_arith')?.value || 0);
-  const geom = Number(document.getElementById('server_rate_geom')?.value || 0);
+  const defaultRate = Number(document.querySelector('button[onclick="calcAdelantoFromButton(this)"]')?.dataset?.rateDecimal || 0);
+  const arith = readRateDecimalFromInput('server_rate_arith', defaultRate);
+  const geom = readRateDecimalFromInput('server_rate_geom', arith);
   return metodo === 'geometrico' ? geom : arith;
 }
 
@@ -111,20 +130,6 @@ function updateAdelantoMetaDisplay() {
   const rate = getSelectedRateDecimal();
   metodoMeta.textContent = metodo === 'geometrico' ? 'Geométrico' : 'Aritmético';
   tasaMeta.textContent = (rate * 100).toFixed(6) + '%';
-  // Debug logging and visible debug update
-  try {
-    const arith = Number(document.getElementById('server_rate_arith')?.value || 0);
-    const geom = Number(document.getElementById('server_rate_geom')?.value || 0);
-    console.log('Adelanto rates - arith:', arith, 'geom:', geom, 'selected:', metodo);
-    const dbgAr = document.getElementById('dbgArith');
-    const dbgGm = document.getElementById('dbgGeom');
-    const dbgSrc = document.getElementById('dbgSource');
-    if (dbgAr) dbgAr.textContent = String(arith);
-    if (dbgGm) dbgGm.textContent = String(geom);
-    if (dbgSrc) dbgSrc.textContent = document.getElementById('metaFuente') ? document.getElementById('metaFuente').textContent : '';
-  } catch (e) {
-    console.warn('Debug update failed', e);
-  }
 }
 
 // Initialize selector behaviour
