@@ -128,16 +128,26 @@ def _parse_history_date(raw_value):
 
 
 def _compute_cuotaparte_average_daily_rate(history_points):
+	def _normalize_quote_value(raw_value):
+		try:
+			parsed = Decimal(str(raw_value))
+		except Exception:
+			return None
+		if parsed <= 0:
+			return None
+		# Historic manual base is in regular cuotaparte units (~80-100),
+		# while CAFCI feed can come as "mil cuotapartes" (~80000-100000).
+		if parsed >= Decimal("1000"):
+			parsed = parsed / Decimal("1000")
+		return parsed
+
 	clean_points = []
 	for point_date, point_value in history_points:
 		parsed_date = _parse_history_date(point_date)
 		if parsed_date is None:
 			continue
-		try:
-			parsed_value = Decimal(str(point_value))
-		except Exception:
-			continue
-		if parsed_value <= 0:
+		parsed_value = _normalize_quote_value(point_value)
+		if parsed_value is None:
 			continue
 		clean_points.append((parsed_date, parsed_value))
 

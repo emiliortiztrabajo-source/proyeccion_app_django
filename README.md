@@ -43,6 +43,100 @@ python manage.py import_excel_data --path "PROYECCION 2026 (4).xlsx" --scenario 
 python manage.py runserver
 ```
 
+## CAFCI en otra PC (SSL/TLS)
+Si en una maquina funciona CAFCI y en otra aparece error SSL/TLS, actualiza dependencias y proba estas opciones:
+
+1. Reinstalar dependencias (incluye `certifi`):
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Si tu red usa certificado corporativo/intermedio, indicar bundle CA:
+   ```bash
+   # PowerShell
+   $env:CAFCI_CA_BUNDLE="C:\ruta\certificados\ca-bundle.pem"
+   python manage.py runserver
+   ```
+3. Solo para diagnostico local (no recomendado en produccion), desactivar verificacion SSL:
+   ```bash
+   # PowerShell
+   $env:CAFCI_SSL_VERIFY="false"
+   python manage.py runserver
+   ```
+
+La app ahora reintenta automaticamente con el bundle de `certifi` cuando falla la verificacion del store del sistema.
+
+## Despliegue por Git a servidor (incluyendo datos)
+Este proyecto esta preparado para desarrollo local con SQLite y despliegue en servidor con PostgreSQL.
+
+### Regla importante
+- No subir `db.sqlite3` al repositorio.
+- Si queres llevar tus datos al servidor, exportalos a fixture JSON y cargalos en PostgreSQL.
+
+### 1) Preparar cambios en tu PC
+1. Instalar dependencias:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Crear migraciones si hiciste cambios de modelos:
+   ```bash
+   python manage.py makemigrations
+   python manage.py migrate
+   ```
+3. Exportar datos actuales (SQLite local):
+   ```bash
+   python manage.py dumpdata --exclude auth.permission --exclude contenttypes --natural-foreign --natural-primary --indent 2 > seed_data.json
+   ```
+4. Subir a Git:
+   ```bash
+   git add .
+   git commit -m "Preparar deploy servidor"
+   git push
+   ```
+
+### 2) Levantar en el servidor
+1. Clonar o actualizar repo:
+   ```bash
+   git pull
+   ```
+2. Instalar dependencias:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Configurar variables de entorno (usar `.env.example` como referencia):
+   - `DJANGO_SECRET_KEY`
+   - `DJANGO_DEBUG=False`
+   - `DJANGO_ALLOWED_HOSTS`
+   - `POSTGRES_DB`
+   - `POSTGRES_USER`
+   - `POSTGRES_PASSWORD`
+   - `POSTGRES_HOST`
+   - `POSTGRES_PORT`
+4. Migrar estructura:
+   ```bash
+   python manage.py migrate
+   ```
+5. Cargar datos exportados desde tu PC (si corresponde):
+   ```bash
+   python manage.py loaddata seed_data.json
+   ```
+6. Preparar estaticos:
+   ```bash
+   python manage.py collectstatic --noinput
+   ```
+
+### 3) Verificacion minima
+- Entrar con usuario admin.
+- Validar dashboard, importaciones y tabla de gastos.
+- Confirmar que CAFCI responde en red del servidor.
+
+### 4) Actualizaciones futuras
+Cuando cambies codigo:
+1. `git push` desde tu PC.
+2. `git pull` en servidor.
+3. `pip install -r requirements.txt` (si cambian deps).
+4. `python manage.py migrate`.
+5. Reiniciar servicio de app.
+
 ## Usuarios y permisos
 - `administrador_finanzas`: acceso completo de negocio
 - `operador_finanzas`: visualización + edición de gastos/ingresos

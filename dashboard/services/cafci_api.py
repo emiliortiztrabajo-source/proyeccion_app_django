@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import io
+import os
 import ssl
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -10,6 +11,11 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import pandas as pd
+
+try:
+    import certifi
+except Exception:  # pragma: no cover - optional dependency safeguard
+    certifi = None
 
 
 CAFCI_API_BASE_URL = "https://api.cafci.org.ar"
@@ -144,6 +150,16 @@ def _extract_cuotaparte(diaria_node: dict[str, Any]) -> Decimal | None:
     return None
 
 
+def _normalize_cuotaparte_units(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    # CAFCI Planilla Diaria often publishes value as "mil cuotapartes".
+    # Keep calculator history in regular cuotaparte units.
+    if value >= Decimal("1000"):
+        return value / Decimal("1000")
+    return value
+
+
 def _extract_other_returns(rendimientos_node: Any) -> list[dict[str, Any]]:
     if not isinstance(rendimientos_node, dict):
         return []
@@ -174,7 +190,17 @@ def _build_request(url: str) -> Request:
 
 
 def _build_ssl_context() -> ssl.SSLContext:
-    context = ssl.create_default_context()
+    verify_env = os.getenv("CAFCI_SSL_VERIFY", "true").strip().lower()
+    verify_ssl = verify_env not in {"0", "false", "no", "off"}
+    if not verify_ssl:
+        context = ssl._create_unverified_context()
+    else:
+        ca_bundle = os.getenv("CAFCI_CA_BUNDLE", "").strip()
+        if ca_bundle:
+            context = ssl.create_default_context(cafile=ca_bundle)
+        else:
+            context = ssl.create_default_context()
+
     # CAFCI endpoints can present legacy TLS/cipher settings on some days.
     # Relaxing minimums improves interoperability on newer OpenSSL runtimes.
     try:
@@ -188,10 +214,50 @@ def _build_ssl_context() -> ssl.SSLContext:
     return context
 
 
+def _build_certifi_ssl_context() -> ssl.SSLContext | None:
+    if certifi is None:
+        return None
+    try:
+        context = ssl.create_default_context(cafile=certifi.where())
+        try:
+            context.minimum_version = ssl.TLSVersion.TLSv1
+        except Exception:
+            pass
+        try:
+            context.set_ciphers("DEFAULT:@SECLEVEL=1")
+        except Exception:
+            pass
+        return context
+    except Exception:
+        return None
+
+
+def _is_cert_verification_error(exc: URLError) -> bool:
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return True
+    text = str(reason or "")
+    return "CERTIFICATE_VERIFY_FAILED" in text.upper()
+
+
+def _urlopen_with_ssl_fallback(req: Request, *, timeout: int):
+    primary_context = _build_ssl_context()
+    try:
+        return urlopen(req, timeout=timeout, context=primary_context)
+    except URLError as exc:
+        # Retry with certifi bundle when system trust store fails on some machines.
+        if not _is_cert_verification_error(exc):
+            raise
+        fallback_context = _build_certifi_ssl_context()
+        if fallback_context is None:
+            raise
+        return urlopen(req, timeout=timeout, context=fallback_context)
+
+
 def _get_json(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
     req = _build_request(url)
     try:
-        with urlopen(req, timeout=timeout, context=_build_ssl_context()) as response:
+        with _urlopen_with_ssl_fallback(req, timeout=timeout) as response:
             raw_body = response.read().decode("utf-8")
     except HTTPError as exc:
         body = ""
@@ -222,7 +288,7 @@ def _get_json(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict[str, 
 def _get_bytes(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
     req = _build_request(url)
     try:
-        with urlopen(req, timeout=timeout, context=_build_ssl_context()) as response:
+        with _urlopen_with_ssl_fallback(req, timeout=timeout) as response:
             return response.read()
     except HTTPError as exc:
         raise CafciResponseError(f"Error al descargar archivo CAFCI ({exc.code}).") from exc
@@ -276,8 +342,8 @@ def _extract_planilla_daily_row(*, fund: str, fund_class: str, fund_name: str | 
             continue
 
         row = matched.iloc[0]
-        actual = _normalize_decimal(row.get(col_cuotaparte_actual))
-        previous = _normalize_decimal(row.get(col_cuotaparte_anterior))
+        actual = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_actual)))
+        previous = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_anterior)))
         computed_daily_return = None
         if actual is not None and previous not in (None, Decimal("0")):
             computed_daily_return = ((actual - previous) / previous) * Decimal("100")
@@ -302,8 +368,8 @@ def _extract_planilla_daily_row(*, fund: str, fund_class: str, fund_name: str | 
 
             if not by_name.empty:
                 row = by_name.iloc[0]
-                actual = _normalize_decimal(row.get(col_cuotaparte_actual))
-                previous = _normalize_decimal(row.get(col_cuotaparte_anterior))
+                actual = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_actual)))
+                previous = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_anterior)))
                 computed_daily_return = None
                 if actual is not None and previous not in (None, Decimal("0")):
                     computed_daily_return = ((actual - previous) / previous) * Decimal("100")
