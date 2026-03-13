@@ -14,7 +14,17 @@
 </section>
 {% else %}
 <section class="dashboard-head">
-  <h2>📈 Rendimiento FCI — Interés diario</h2>
+  <div class="dashboard-head-title-row">
+    <h2>📈 Rendimiento FCI — Interés diario</h2>
+    <details class="help-inline help-inline--head">
+      <summary aria-label="Ayuda sobre esta pantalla">?</summary>
+      <div class="help-inline__content help-inline__content--head">
+        Esta app centraliza gastos y proyecciones financieras para apoyar decisiones de pago y liquidez.<br>
+        El cálculo de rendimiento FCI usa la serie de tasas/cuotapartes del Excel de valores, alimentado con el archivo que se descarga todos los días desde la Cámara Argentina de Fondos Comunes de Inversión (CAFCI).<br>
+        Con eso se estiman rendimientos diarios, acumulados y escenarios de adelanto/proyección.
+      </div>
+    </details>
+  </div>
   <form method="get" class="filter-grid filter-grid--period" id="periodFilterForm">
     <div class="form-row">{{ period_form.year.label_tag }}{{ period_form.year }}</div>
     <div class="form-row">{{ period_form.month.label_tag }}{{ period_form.month }}</div>
@@ -59,7 +69,7 @@
         <p>$ {{ total_mes|money_ar }}</p>
       </article>
       <article class="kpi-card">
-        <h4>Total rendimientos anual — {{ selected_year }}</h4>
+        <h4>Total rendimientos proyectados desde {{ month_name }} — {{ selected_year }}</h4>
         <p>$ {{ total_anual|money_ar }}</p>
       </article>
     </div>
@@ -360,7 +370,17 @@
         </select>
       </div>
       <div class="form-row">
-        <label for="adelantoMetodo">Método de tasa</label>
+        <div class="label-with-help-row">
+          <label for="adelantoMetodo">Método de tasa</label>
+          <details class="help-inline">
+            <summary aria-label="Ayuda sobre método de tasa">?</summary>
+            <div class="help-inline__content">
+              <strong>Aritmético:</strong> suma los rendimientos diarios y los divide por la cantidad de días. Es un promedio simple (no capitaliza).<br>
+              <strong>Geométrico:</strong> multiplica los factores diarios (<code>1 + r</code>) y obtiene una tasa diaria equivalente. Sí contempla capitalización.<br>
+              En ambos casos se usa la serie disponible del fondo; si cargás historial manual, se toman los últimos 7 días previos.
+            </div>
+          </details>
+        </div>
         <select id="adelantoMetodo">
           <option value="aritmetico">Aritmético</option>
           <option value="geometrico">Geométrico</option>

@@ -52,7 +52,25 @@ body {
 }
 .panel-narrow { max-width: 680px; margin: 20px auto; }
 
-.dashboard-head h2 { margin: 0 0 12px; }
+.dashboard-head h2 { margin: 0; }
+.dashboard-head-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.help-inline--head {
+  margin-left: 2px;
+}
+.help-inline--head summary {
+  width: 20px;
+  height: 20px;
+  font-size: 13px;
+}
+.help-inline__content--head {
+  margin-top: 10px;
+  max-width: 720px;
+}
 .filter-grid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; align-items: end; }
 .filter-grid--period { grid-template-columns: repeat(2, minmax(180px, 220px)); }
 .filter-grid--expense { grid-template-columns: minmax(220px, 1.2fr) minmax(180px, .9fr) auto; margin-bottom: 12px; }
@@ -161,6 +179,42 @@ th { background: rgba(15, 23, 42, .8); position: sticky; top: 0; }
 }
 .calc-box .form-row { margin-bottom: 8px; }
 .calc-box .form-row:last-of-type { margin-bottom: 4px; }
+.label-with-help-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.help-inline {
+  margin: 0;
+}
+.help-inline summary {
+  list-style: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(191, 219, 254, .65);
+  color: #bfdbfe;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+}
+.help-inline summary::-webkit-details-marker { display: none; }
+.help-inline__content {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, .45);
+  background: rgba(15, 23, 42, .85);
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.45;
+}
 .section-meta--hint { margin-top: 4px; opacity: .95; }
 .calc-actions { margin-top: 8px; margin-bottom: 6px; }
 .calc-result {
@@ -194,4 +248,7 @@ th { background: rgba(15, 23, 42, .8); position: sticky; top: 0; }
   .chart-kpi-grid { grid-template-columns: 1fr; }
   .chart-wrap { height: 300px; }
   .panel-title-row { flex-direction: column; align-items: flex-start; }
+  .dashboard-head-title-row {
+    align-items: flex-start;
+  }
 }

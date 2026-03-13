@@ -1,9 +1,6 @@
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 import os
 import logging
 
-from django.conf import settings
 from django.core.management import call_command
 
 logger = logging.getLogger(__name__)
@@ -36,6 +33,15 @@ def start_scheduler():
     enabled = os.getenv("CAFCI_SCHEDULER_ENABLED", "false").lower() in ("1", "true", "yes")
     if not enabled:
         logger.info("CAFCI scheduler disabled (set CAFCI_SCHEDULER_ENABLED=1 to enable)")
+        return None
+
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+    except ModuleNotFoundError:
+        logger.error(
+            "APScheduler is not installed. Install dependencies and retry with CAFCI_SCHEDULER_ENABLED=1."
+        )
         return None
 
     scheduler = BackgroundScheduler()

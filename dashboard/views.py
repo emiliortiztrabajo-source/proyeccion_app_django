@@ -640,7 +640,8 @@ def dashboard_home(request):
 
 	cash_rows = build_year_cash_projection(scenario=scenario, year=selected_year)
 	month_rows = [row for row in cash_rows if row["mes"] == selected_month]
-	monthly_summary = monthly_interest_summary(cash_rows, scenario.start_month)
+	# Rolling projection: show only selected month and onward.
+	monthly_summary = monthly_interest_summary(cash_rows, selected_month)
 	calendar_payload = get_month_calendar_payload(cash_rows, selected_year, selected_month)
 
 	expense_qs, expense_total = filtered_expenses(
@@ -705,7 +706,7 @@ def dashboard_home(request):
 		"income_rows": monthly_incomes[:250],
 		"income_total": income_total,
 		"total_mes": _sum_interest(month_rows),
-		"total_anual": _sum_interest(cash_rows),
+		"total_anual": _sum_interest([row for row in cash_rows if row["mes"] >= selected_month]),
 		"daily_rate_pct": float(scenario.daily_interest_rate * Decimal("100")),
 		"daily_rate_pct_input": f"{(scenario.daily_interest_rate * Decimal('100')):.4f}",
 		"adelanto_daily_rate_decimal": f"{scenario.daily_interest_rate:.6f}",

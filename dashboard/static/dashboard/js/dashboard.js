@@ -31,6 +31,7 @@ function renderInteresChart(canvasId, labels, values) {
   if (chartRegistry[canvasId]) {
     chartRegistry[canvasId].destroy();
   }
+
   chartRegistry[canvasId] = new Chart(el, {
     type: 'line',
     data: {
