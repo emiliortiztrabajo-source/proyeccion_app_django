@@ -7,10 +7,14 @@ register = template.Library()
 
 
 @register.filter
-def money_ar(value):
+def money_ar(value, decimals=2):
     if value is None:
         return "—"
-    rendered = f"{float(value):,.2f}"
+    try:
+        dec = int(decimals)
+    except Exception:
+        dec = 2
+    rendered = f"{float(value):,.{dec}f}"
     return rendered.replace(",", "X").replace(".", ",").replace("X", ".")
 
 

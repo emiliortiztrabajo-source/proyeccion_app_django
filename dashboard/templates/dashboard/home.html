@@ -320,8 +320,8 @@
             <td>{{ fund.requested_name }}</td>
             <td>{{ fund.fund_name|default:'—' }}</td>
             <td>{% if fund.daily_date %}{{ fund.daily_date|date:'d/m/Y' }}{% else %}-{% endif %}</td>
-            <td>{% if fund.cuotaparte != None %}$ {{ fund.cuotaparte|money_ar }}{% else %}-{% endif %}</td>
-            <td>{% if fund.cuotaparte_previous != None %}$ {{ fund.cuotaparte_previous|money_ar }}{% else %}-{% endif %}</td>
+            <td>{% if fund.cuotaparte != None %}$ {{ fund.cuotaparte|money_ar:6 }}{% else %}-{% endif %}</td>
+            <td>{% if fund.cuotaparte_previous != None %}$ {{ fund.cuotaparte_previous|money_ar:6 }}{% else %}-{% endif %}</td>
             <td>{% if fund.daily_return != None %}{{ fund.daily_return|floatformat:6 }}%{% else %}-{% endif %}</td>
             <td>{% if fund.estimated_avg_return_pct != None %}{{ fund.estimated_avg_return_pct|floatformat:6 }}%{% else %}-{% endif %}</td>
           </tr>
