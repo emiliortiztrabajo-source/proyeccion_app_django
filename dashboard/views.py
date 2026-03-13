@@ -591,7 +591,15 @@ def _compute_recent_7day_rate():
 
 @login_required
 def dashboard_home(request):
+	available_scenarios = list(Scenario.objects.order_by("-year", "name"))
 	scenario = resolve_default_scenario()
+	requested_scenario_id = request.GET.get("scenario_id")
+	if requested_scenario_id:
+		try:
+			requested_scenario_id = int(requested_scenario_id)
+			scenario = next((s for s in available_scenarios if s.id == requested_scenario_id), scenario)
+		except (TypeError, ValueError):
+			pass
 
 	if not scenario:
 		return render(request, "dashboard/home.html", {"no_data": True})
@@ -601,6 +609,8 @@ def dashboard_home(request):
 		request.GET or None,
 		year=scenario.year,
 		start_month=scenario.start_month,
+		scenario_choices=[(s.id, f"{s.name} ({s.year})") for s in available_scenarios],
+		selected_scenario_id=scenario.id,
 	)
 	expense_filter_form = ExpenseFilterForm(
 		request.GET or None,
@@ -613,6 +623,15 @@ def dashboard_home(request):
 	selected_payment_date = None
 
 	if period_form.is_valid():
+		selected_form_scenario_id = int(period_form.cleaned_data["scenario_id"])
+		selected_scenario = next((s for s in available_scenarios if s.id == selected_form_scenario_id), None)
+		if selected_scenario is not None and selected_scenario.id != scenario.id:
+			scenario = selected_scenario
+			provider_qs = scenario.expenses.values_list("provider_id", flat=True).distinct()
+			expense_filter_form = ExpenseFilterForm(
+				request.GET or None,
+				provider_queryset=Provider.objects.filter(id__in=provider_qs),
+			)
 		selected_year = period_form.cleaned_data["year"]
 		selected_month = int(period_form.cleaned_data["month"])
 
@@ -690,6 +709,8 @@ def dashboard_home(request):
 
 	context = {
 		"scenario": scenario,
+		"available_scenarios": available_scenarios,
+		"show_cafci_panel": scenario.interest_mode == Scenario.INTEREST_MODE_WEEKLY_AVG,
 		"period_form": period_form,
 		"expense_filter_form": expense_filter_form,
 		"month_name": MONTH_NAME_ES[selected_month],
@@ -721,35 +742,39 @@ def dashboard_home(request):
 		"next_dir_amount": _next_dir_for("amount"),
 		"today": date.today(),
 	}
-	context.update(_build_cafci_context(request))
+	if context["show_cafci_panel"]:
+		context.update(_build_cafci_context(request))
 
-	# Keep default displayed rate aligned with source series first (manual/excel), then fall back.
-	preferred_rates = [
-		_sanitize_rate_decimal(context.get("cafci_1822_series_arith_rate_decimal")),
-		_sanitize_rate_decimal(context.get("cafci_1822_series_geom_rate_decimal")),
-		_sanitize_rate_decimal(context.get("cafci_1822_geometric_rate_decimal")),
-		_sanitize_rate_decimal(context.get("cafci_1822_7day_rate_decimal")),
-		_sanitize_rate_decimal(context.get("cafci_1822_estimated_rate_decimal")),
-	]
-	estimated_rate_decimal = next((r for r in preferred_rates if r is not None), None)
-	if estimated_rate_decimal is not None:
-		context["daily_rate_pct"] = float(estimated_rate_decimal * Decimal("100"))
-		context["daily_rate_pct_input"] = f"{(estimated_rate_decimal * Decimal('100')):.4f}"
-		context["adelanto_daily_rate_decimal"] = f"{estimated_rate_decimal:.10f}".rstrip("0").rstrip(".")
+	fixed_rate_decimal = _sanitize_rate_decimal(scenario.daily_interest_rate) or Decimal("0")
+	context["scenario_interest_mode"] = scenario.interest_mode
+
+	if scenario.interest_mode == Scenario.INTEREST_MODE_WEEKLY_AVG:
+		# Weekly-average scenario: prefer calculated rates from series/history.
+		preferred_rates = [
+			_sanitize_rate_decimal(context.get("cafci_1822_series_arith_rate_decimal")),
+			_sanitize_rate_decimal(context.get("cafci_1822_series_geom_rate_decimal")),
+			_sanitize_rate_decimal(context.get("cafci_1822_geometric_rate_decimal")),
+			_sanitize_rate_decimal(context.get("cafci_1822_7day_rate_decimal")),
+			_sanitize_rate_decimal(context.get("cafci_1822_estimated_rate_decimal")),
+		]
+		selected_rate_decimal = next((r for r in preferred_rates if r is not None), fixed_rate_decimal)
+		context["daily_rate_pct"] = float(selected_rate_decimal * Decimal("100"))
+		context["daily_rate_pct_input"] = f"{(selected_rate_decimal * Decimal('100')):.4f}"
+		context["adelanto_daily_rate_decimal"] = _rate_decimal_to_plain_string(selected_rate_decimal)
+		context["calculator_rate_arith_decimal"] = _rate_decimal_to_plain_string(
+			_sanitize_rate_decimal(context.get("cafci_1822_series_arith_rate_decimal")) or selected_rate_decimal
+		)
+		context["calculator_rate_geom_decimal"] = _rate_decimal_to_plain_string(
+			_sanitize_rate_decimal(context.get("cafci_1822_series_geom_rate_decimal")) or selected_rate_decimal
+		)
 	else:
-		cafci_ficha = context.get("cafci_ficha") or {}
-		cafci_daily_return_pct = cafci_ficha.get("dailyReturn")
-		if cafci_daily_return_pct is not None:
-			try:
-				rate_pct_decimal = Decimal(cafci_daily_return_pct)
-				rate_decimal = _sanitize_rate_decimal(rate_pct_decimal / Decimal("100"))
-			except Exception:
-				rate_decimal = None
-				rate_pct_decimal = None
-			if rate_decimal is not None and rate_pct_decimal is not None:
-				context["daily_rate_pct"] = float(rate_pct_decimal)
-				context["daily_rate_pct_input"] = f"{rate_pct_decimal:.4f}"
-				context["adelanto_daily_rate_decimal"] = f"{rate_decimal:.10f}".rstrip("0").rstrip(".")
+		# Fixed scenario: keep explicit configured rate (e.g., 0.0967%) everywhere in calculators.
+		context["daily_rate_pct"] = float(fixed_rate_decimal * Decimal("100"))
+		context["daily_rate_pct_input"] = f"{(fixed_rate_decimal * Decimal('100')):.4f}"
+		fixed_rate_str = _rate_decimal_to_plain_string(fixed_rate_decimal)
+		context["adelanto_daily_rate_decimal"] = fixed_rate_str
+		context["calculator_rate_arith_decimal"] = fixed_rate_str
+		context["calculator_rate_geom_decimal"] = fixed_rate_str
 
 	return render(request, "dashboard/home.html", context)
 

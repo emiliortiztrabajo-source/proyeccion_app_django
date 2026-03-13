@@ -2,10 +2,18 @@ from django.db import models
 
 
 class Scenario(models.Model):
+	INTEREST_MODE_FIXED = "FIXED"
+	INTEREST_MODE_WEEKLY_AVG = "WEEKLY_AVG"
+	INTEREST_MODE_CHOICES = (
+		(INTEREST_MODE_FIXED, "Tasa fija del escenario"),
+		(INTEREST_MODE_WEEKLY_AVG, "Tasa promedio semanal (real)"),
+	)
+
 	name = models.CharField(max_length=120)
 	year = models.PositiveIntegerField()
 	start_month = models.PositiveSmallIntegerField(default=3)
 	daily_interest_rate = models.DecimalField(max_digits=8, decimal_places=6, default=0.000967)
+	interest_mode = models.CharField(max_length=20, choices=INTEREST_MODE_CHOICES, default=INTEREST_MODE_FIXED)
 	is_active = models.BooleanField(default=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)

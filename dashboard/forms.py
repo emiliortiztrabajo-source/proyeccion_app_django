@@ -22,11 +22,18 @@ MONTH_NAME_ES = {
 
 
 class DashboardFilterForm(forms.Form):
+    scenario_id = forms.ChoiceField(label="Escenario", choices=[])
     year = forms.IntegerField(label="Año")
     month = forms.ChoiceField(label="Mes", choices=[])
 
-    def __init__(self, *args, year=2026, start_month=3, **kwargs):
+    def __init__(self, *args, year=2026, start_month=3, scenario_choices=None, selected_scenario_id=None, **kwargs):
         super().__init__(*args, **kwargs)
+        normalized_choices = [(str(pk), label) for pk, label in (scenario_choices or [])]
+        self.fields["scenario_id"].choices = normalized_choices
+        if selected_scenario_id is not None:
+            self.fields["scenario_id"].initial = str(selected_scenario_id)
+        elif normalized_choices:
+            self.fields["scenario_id"].initial = normalized_choices[0][0]
         self.fields["month"].choices = [(m, MONTH_NAME_ES[m]) for m in range(start_month, 13)]
         self.fields["year"].initial = year
         self.fields["month"].initial = start_month

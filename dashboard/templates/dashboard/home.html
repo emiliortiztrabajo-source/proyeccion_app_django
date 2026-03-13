@@ -14,20 +14,29 @@
 </section>
 {% else %}
 <section class="dashboard-head">
-  <div class="dashboard-head-title-row">
-    <h2>📈 Rendimiento FCI — Interés diario</h2>
-    <details class="help-inline help-inline--head">
-      <summary aria-label="Ayuda sobre esta pantalla">?</summary>
-      <div class="help-inline__content help-inline__content--head">
-        Esta app centraliza gastos y proyecciones financieras para apoyar decisiones de pago y liquidez.<br>
-        El cálculo de rendimiento FCI usa la serie de tasas/cuotapartes del Excel de valores, alimentado con el archivo que se descarga todos los días desde la Cámara Argentina de Fondos Comunes de Inversión (CAFCI).<br>
-        Con eso se estiman rendimientos diarios, acumulados y escenarios de adelanto/proyección.
+  <form method="get" id="periodFilterForm">
+    <div class="dashboard-head-scenario-row">
+      <div class="scenario-switch-card">
+        <div class="form-row form-row--scenario">{{ period_form.scenario_id.label_tag }}{{ period_form.scenario_id }}</div>
       </div>
-    </details>
-  </div>
-  <form method="get" class="filter-grid filter-grid--period" id="periodFilterForm">
-    <div class="form-row">{{ period_form.year.label_tag }}{{ period_form.year }}</div>
-    <div class="form-row">{{ period_form.month.label_tag }}{{ period_form.month }}</div>
+    </div>
+
+    <div class="dashboard-head-title-row">
+      <h2>📈 Rendimiento FCI — Interés diario</h2>
+      <details class="help-inline help-inline--head">
+        <summary aria-label="Ayuda sobre esta pantalla">?</summary>
+        <div class="help-inline__content help-inline__content--head">
+          Esta app centraliza gastos y proyecciones financieras para apoyar decisiones de pago y liquidez.<br>
+          El cálculo de rendimiento FCI usa la serie de tasas/cuotapartes del Excel de valores, alimentado con el archivo que se descarga todos los días desde la Cámara Argentina de Fondos Comunes de Inversión (CAFCI).<br>
+          Con eso se estiman rendimientos diarios, acumulados y escenarios de adelanto/proyección.
+        </div>
+      </details>
+    </div>
+
+    <div class="dashboard-head-period-row">
+      <div class="form-row">{{ period_form.year.label_tag }}{{ period_form.year }}</div>
+      <div class="form-row">{{ period_form.month.label_tag }}{{ period_form.month }}</div>
+    </div>
     {% if request.GET.provider %}<input type="hidden" name="provider" value="{{ request.GET.provider }}">{% endif %}
     {% if request.GET.payment_date %}<input type="hidden" name="payment_date" value="{{ request.GET.payment_date }}">{% endif %}
     {% if cafci_selected_start %}<input type="hidden" name="start_date" value="{{ cafci_selected_start|date:'Y-m-d' }}">{% endif %}
@@ -265,6 +274,7 @@
   </div>
 </section>
 
+{% if show_cafci_panel %}
 <section class="panel panel-cafci">
   <div class="panel-title-row">
     <h3>Datos FCI - Planilla diaria</h3>
@@ -333,11 +343,12 @@
   </div>
   </div>
 </section>
+{% endif %}
 
 <section class="panel panel-calculators">
   <div class="panel-title-row">
     <h3>🧮 Calculadoras</h3>
-    <p class="section-meta section-meta--inline">Herramientas de simulación rápida para decisión operativa.</p>
+    <p class="section-meta section-meta--inline">Herramientas de simulación rápida para decisión operativa. Escenario activo: <strong>{{ scenario.name }}</strong> ({{ scenario.get_interest_mode_display }}).</p>
   </div>
   <div class="double-grid">
     <article class="calc-box calc-box--adelanto">
@@ -369,6 +380,7 @@
           <option>Simple</option>
         </select>
       </div>
+      {% if scenario_interest_mode == 'WEEKLY_AVG' %}
       <div class="form-row">
         <div class="label-with-help-row">
           <label for="adelantoMetodo">Método de tasa</label>
@@ -387,12 +399,13 @@
         </select>
       </div>
       <p class="section-meta section-meta--hint">Método de tasa: <strong id="metaMetodo">Aritmético</strong> · Fuente de datos: <strong id="metaFuente">{{ cafci_1822_source_mode|default:'manual'|capfirst }}</strong></p>
-      <p class="section-meta section-meta--hint">Tasa diaria usada: <strong id="metaTasa">{{ daily_rate_pct|floatformat:6 }}%</strong></p>
-      {% if cafci_1822_geometric_rate_pct %}
+      {% endif %}
+      <p class="section-meta section-meta--hint">Tasa diaria usada: <strong id="metaTasa" style="display:inline-block;padding:3px 10px;border-radius:999px;background:#fef08a;border:2px solid #f59e0b;color:#7c2d12;font-weight:900;letter-spacing:.3px;box-shadow:0 0 0 2px rgba(245,158,11,.35),0 0 18px rgba(245,158,11,.55);">{{ daily_rate_pct|floatformat:6 }}%</strong></p>
+      {% if scenario_interest_mode == 'WEEKLY_AVG' and cafci_1822_geometric_rate_pct %}
         <p class="section-meta section-meta--hint">Tasa geométrica (hist): <strong>{{ cafci_1822_geometric_rate_pct|floatformat:6 }}%</strong> — puntos: {{ cafci_1822_geometric_points_used }}</p>
       {% endif %}
-      <input type="hidden" id="server_rate_arith" value="{{ cafci_1822_series_arith_rate_decimal_str|default:adelanto_daily_rate_decimal }}">
-      <input type="hidden" id="server_rate_geom" value="{{ cafci_1822_series_geom_rate_decimal_str|default:adelanto_daily_rate_decimal }}">
+      <input type="hidden" id="server_rate_arith" value="{{ calculator_rate_arith_decimal|default:adelanto_daily_rate_decimal }}">
+      <input type="hidden" id="server_rate_geom" value="{{ calculator_rate_geom_decimal|default:adelanto_daily_rate_decimal }}">
       <div class="calc-actions">
         <button type="button" class="btn-primary" data-rate-decimal="{{ adelanto_daily_rate_decimal }}" onclick="calcAdelantoFromButton(this)">Calcular</button>
       </div>
