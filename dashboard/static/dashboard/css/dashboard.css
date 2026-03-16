@@ -63,7 +63,7 @@ body {
 .dashboard-head h2 { margin: 0; }
 .dashboard-head-scenario-row {
   position: absolute;
-  top: 12px;
+  top: 150px;
   right: 0;
   width: 280px;
 }
