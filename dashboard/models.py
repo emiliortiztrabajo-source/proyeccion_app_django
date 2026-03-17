@@ -73,6 +73,44 @@ class DailyProjection(models.Model):
 		return f"{self.scenario} - {self.projection_date}"
 
 
+class InvestmentDailySnapshot(models.Model):
+	scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="investment_snapshots")
+	snapshot_date = models.DateField()
+	net_flow = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+	active_capital = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+	daily_yield = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+	cumulative_yield = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+	was_cut = models.BooleanField(default=False)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["snapshot_date"]
+		unique_together = ("scenario", "snapshot_date")
+
+	def __str__(self):
+		return f"{self.scenario} - {self.snapshot_date}"
+
+
+class InvestmentDailyFlow(models.Model):
+	snapshot = models.ForeignKey(
+		InvestmentDailySnapshot,
+		on_delete=models.CASCADE,
+		related_name="flows",
+	)
+	label = models.CharField(max_length=255)
+	amount = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["snapshot", "label"]
+		unique_together = ("snapshot", "label")
+
+	def __str__(self):
+		return f"{self.snapshot} - {self.label}: {self.amount}"
+
+
 class IncomeEntry(models.Model):
 	scenario = models.ForeignKey(Scenario, on_delete=models.CASCADE, related_name="income_entries")
 	entry_date = models.DateField()

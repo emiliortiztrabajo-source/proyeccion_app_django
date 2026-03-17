@@ -1,9 +1,10 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from bisect import bisect_right
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required, user_passes_test
-from django.db.models import Sum
+from django.db.models import Min, Sum
 from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
@@ -11,20 +12,36 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.core.management import call_command
+from urllib.parse import urlencode
 
-from .forms import DashboardFilterForm, ExcelImportForm, ExpenseExcelImportForm, ExpenseFilterForm, ExpenseForm, IncomeEntryForm, ManualExpenseForm
-from .models import Expense, ExpenseChangeLog, FundCuotaparteHistory, IncomeEntry, Provider, Scenario
+from .forms import (
+	DashboardFilterForm,
+	ExcelImportForm,
+	ExpenseExcelImportForm,
+	ExpenseFilterForm,
+	ExpenseForm,
+	IncomeEntryForm,
+	IncomeExcelImportForm,
+	InvestmentExcelImportForm,
+	ManualExpenseForm,
+)
+from .models import Expense, ExpenseChangeLog, FundCuotaparteHistory, IncomeEntry, InvestmentDailySnapshot, Provider, Scenario
 from .services.cafci_api import CafciApiError, CafciNetworkError, build_cafci_snapshot
 from .services.expense_excel_io import export_expenses_to_excel, import_expenses_from_excel
 from .services.dashboard_logic import (
+	build_real_projection_snapshot,
 	build_year_cash_projection,
 	filtered_expenses,
+	get_dashboard_scenarios,
 	get_month_calendar_payload,
+	is_dashboard_visible_scenario,
 	monthly_interest_summary,
 	resolve_default_scenario,
 )
 from .services.parsing import MONTH_NAME_ES
 from .services.excel_importer import import_excel_bytes
+from .services.income_excel_io import import_incomes_from_excel
+from .services.investment_excel_io import import_investment_snapshots_from_excel
 from decimal import InvalidOperation
 
 
@@ -589,10 +606,47 @@ def _compute_recent_7day_rate():
 	return _compute_cuotaparte_average_daily_rate(db_points)
 
 
+def _resolve_request_scenario(request):
+	scenario = resolve_default_scenario()
+	raw_scenario_id = request.POST.get("scenario_id") or request.GET.get("scenario_id")
+	if not raw_scenario_id:
+		return scenario
+	try:
+		scenario_id = int(raw_scenario_id)
+	except (TypeError, ValueError):
+		return scenario
+	requested_scenario = Scenario.objects.filter(pk=scenario_id).first()
+	if requested_scenario is None or not is_dashboard_visible_scenario(requested_scenario):
+		return scenario
+	return requested_scenario
+
+
+def _is_real_scenario(scenario):
+	if scenario is None:
+		return False
+	return "real" in _normalize_text(scenario.name)
+
+
+def _build_home_url(*, scenario, year=None, month=None, provider=None, payment_date=None, anchor=None):
+	params = {"scenario_id": scenario.id}
+	if year is not None:
+		params["year"] = year
+	if month is not None:
+		params["month"] = month
+	if provider is not None:
+		params["provider"] = provider
+	if payment_date is not None:
+		params["payment_date"] = payment_date.isoformat() if hasattr(payment_date, "isoformat") else payment_date
+	url = f"{reverse('dashboard:home')}?{urlencode(params)}"
+	if anchor:
+		url = f"{url}{anchor}"
+	return url
+
+
 @login_required
 def dashboard_home(request):
-	available_scenarios = list(Scenario.objects.order_by("-year", "name"))
-	scenario = resolve_default_scenario()
+	available_scenarios = get_dashboard_scenarios()
+	scenario = _resolve_request_scenario(request)
 	requested_scenario_id = request.GET.get("scenario_id")
 	if requested_scenario_id:
 		try:
@@ -605,10 +659,30 @@ def dashboard_home(request):
 		return render(request, "dashboard/home.html", {"no_data": True})
 
 	provider_qs = scenario.expenses.values_list("provider_id", flat=True).distinct()
+	today = date.today()
+
+	# Determine the selected year (may come from query params) so we can build the month selector correctly.
+	selected_year = scenario.year
+	raw_year = request.GET.get("year")
+	if raw_year:
+		try:
+			selected_year = int(raw_year)
+		except (TypeError, ValueError):
+			selected_year = scenario.year
+
+	# Determine the earliest month with data so the user can navigate to January/Febrero if needed.
+	dashboard_start_month = scenario.start_month
+	min_investment_date = (
+		InvestmentDailySnapshot.objects.filter(scenario=scenario, snapshot_date__year=selected_year)
+			.aggregate(min_date=Min("snapshot_date"))["min_date"]
+	)
+	if min_investment_date:
+		dashboard_start_month = min(dashboard_start_month, min_investment_date.month)
+
 	period_form = DashboardFilterForm(
 		request.GET or None,
-		year=scenario.year,
-		start_month=scenario.start_month,
+		year=selected_year,
+		start_month=dashboard_start_month,
 		scenario_choices=[(s.id, f"{s.name} ({s.year})") for s in available_scenarios],
 		selected_scenario_id=scenario.id,
 	)
@@ -617,8 +691,19 @@ def dashboard_home(request):
 		provider_queryset=Provider.objects.filter(id__in=provider_qs),
 	)
 
-	selected_year = scenario.year
-	selected_month = scenario.start_month
+	selected_month = dashboard_start_month
+	raw_month = request.GET.get("month")
+	if raw_month:
+		try:
+			selected_month = int(raw_month)
+		except (TypeError, ValueError):
+			selected_month = dashboard_start_month
+	elif raw_year is None and scenario.year == today.year:
+		selected_month = today.month
+	if selected_month < dashboard_start_month:
+		selected_month = dashboard_start_month
+	period_form.fields["year"].initial = selected_year
+	period_form.fields["month"].initial = selected_month
 	selected_provider = None
 	selected_payment_date = None
 
@@ -634,6 +719,19 @@ def dashboard_home(request):
 			)
 		selected_year = period_form.cleaned_data["year"]
 		selected_month = int(period_form.cleaned_data["month"])
+
+		# Recompute the earliest month with data for the chosen scenario/year so the month selector can include Enero/Feb.
+		dashboard_start_month = scenario.start_month
+		min_investment_date = (
+			InvestmentDailySnapshot.objects.filter(scenario=scenario, snapshot_date__year=selected_year)
+				.aggregate(min_date=Min("snapshot_date"))["min_date"]
+		)
+		if min_investment_date:
+			dashboard_start_month = min(dashboard_start_month, min_investment_date.month)
+		if selected_month < dashboard_start_month:
+			selected_month = dashboard_start_month
+		period_form.fields["month"].choices = [(m, MONTH_NAME_ES[m]) for m in range(dashboard_start_month, 13)]
+		period_form.fields["month"].initial = selected_month
 
 	if expense_filter_form.is_valid():
 		selected_provider = expense_filter_form.cleaned_data.get("provider")
@@ -657,11 +755,166 @@ def dashboard_home(request):
 			return "desc"
 		return "asc"
 
-	cash_rows = build_year_cash_projection(scenario=scenario, year=selected_year)
+	is_real_scenario = _is_real_scenario(scenario)
+	cash_rows = build_year_cash_projection(scenario=scenario, year=selected_year, start_month=dashboard_start_month)
 	month_rows = [row for row in cash_rows if row["mes"] == selected_month]
+	real_snapshot = build_real_projection_snapshot(scenario=scenario, year=selected_year, month=selected_month)
 	# Rolling projection: show only selected month and onward.
 	monthly_summary = monthly_interest_summary(cash_rows, selected_month)
+	chart_summary = monthly_interest_summary(cash_rows, dashboard_start_month)
 	calendar_payload = get_month_calendar_payload(cash_rows, selected_year, selected_month)
+
+	investment_rows = list(
+		InvestmentDailySnapshot.objects.filter(
+			scenario=scenario,
+			snapshot_date__year=selected_year,
+			snapshot_date__month=selected_month,
+		)
+		.prefetch_related("flows")
+		.order_by("snapshot_date")
+	)
+	investment_rows_current = list(
+		InvestmentDailySnapshot.objects.filter(
+			scenario=scenario,
+			snapshot_date__lte=date.today(),
+		)
+		.prefetch_related("flows")
+		.order_by("snapshot_date")
+	)
+	if not is_real_scenario:
+		investment_rows = []
+		investment_rows_current = []
+
+	# Preload cuotaparte history so we can compute how each investment evolved until today.
+	fund_name = CAFCI_CALCULATOR_FUND_NAME
+	cuotaparte_qs = FundCuotaparteHistory.objects.filter(fund_name=fund_name).order_by("quote_date")
+	cuotaparte_history = {r.quote_date: r.cuotaparte for r in cuotaparte_qs}
+	cuotaparte_dates = sorted(cuotaparte_history.keys())
+
+	latest_cuotaparte = cuotaparte_history.get(cuotaparte_dates[-1]) if cuotaparte_dates else None
+
+	def _format_currency(value: Decimal | None) -> str:
+		if value is None:
+			return "—"
+		return f"$ {value:,.2f}"
+
+	def _find_cuotaparte_before_or_on(target: date) -> Decimal | None:
+		if not cuotaparte_dates:
+			return None
+		idx = bisect_right(cuotaparte_dates, target)
+		if idx == 0:
+			return None
+		return cuotaparte_history[cuotaparte_dates[idx - 1]]
+
+	def _build_active_investment_lots(snapshots):
+		open_lots = []
+
+		def _consume_lots(remaining, *, preferred_label=None):
+			for same_label_only in (True, False):
+				if remaining <= 0:
+					break
+				for lot in open_lots:
+					if remaining <= 0:
+						break
+					if lot["amount"] <= 0:
+						continue
+					if preferred_label:
+						if same_label_only and lot["label"] != preferred_label:
+							continue
+						if not same_label_only and lot["label"] == preferred_label:
+							continue
+					consume_amount = min(lot["amount"], remaining)
+					lot["amount"] -= consume_amount
+					remaining -= consume_amount
+			return remaining
+
+		for snap in snapshots:
+			for flow in snap.flows.all():
+				amount = flow.amount or Decimal("0")
+				if amount > 0:
+					open_lots.append(
+						{
+							"snapshot_date": snap.snapshot_date,
+							"label": flow.label,
+							"amount": amount,
+						}
+					)
+				elif amount < 0:
+					_consume_lots(-amount, preferred_label=flow.label)
+
+		return [lot for lot in open_lots if lot["amount"] > 0]
+
+	last_cut_date = None
+	for row in investment_rows_current:
+		if row.was_cut:
+			last_cut_date = row.snapshot_date
+	active_snapshots = [
+		row for row in investment_rows_current if last_cut_date is None or row.snapshot_date > last_cut_date
+	]
+	active_investment_lots = _build_active_investment_lots(active_snapshots)
+	active_investment_capital = sum((lot["amount"] for lot in active_investment_lots), Decimal("0"))
+	active_lots_by_date = {}
+	for lot in active_investment_lots:
+		date_bucket = active_lots_by_date.setdefault(
+			lot["snapshot_date"],
+			{"net_flow": Decimal("0"), "flows": {}},
+		)
+		date_bucket["net_flow"] += lot["amount"]
+		date_bucket["flows"][lot["label"]] = date_bucket["flows"].get(lot["label"], Decimal("0")) + lot["amount"]
+
+	# Add investment flows tooltip data for the calendar view.
+	investment_by_date = {row.snapshot_date: row for row in investment_rows}
+	for week in calendar_payload["weeks"]:
+		for day in week:
+			if not day["in_month"]:
+				day["net_flow"] = None
+				day["investment_tooltip"] = ""
+				continue
+			active_entry = active_lots_by_date.get(day["date"]) if is_real_scenario else None
+			snapshot = investment_by_date.get(day["date"])
+			if is_real_scenario and not active_entry:
+				day["interes"] = snapshot.daily_yield if snapshot else day.get("interes")
+				day["net_flow"] = None
+				day["investment_tooltip"] = ""
+				continue
+			if not is_real_scenario and not snapshot:
+				day["net_flow"] = None
+				day["investment_tooltip"] = ""
+				continue
+
+			# Override daily interest with the actual yield from the imported investment snapshot
+			if snapshot:
+				day["interes"] = snapshot.daily_yield
+			if is_real_scenario:
+				day["net_flow"] = active_entry["net_flow"]
+				parts = [
+					f"Fecha: {day['date']:%d/%m/%Y}",
+					f"Total invertido vigente: {_format_currency(active_entry['net_flow'])}",
+				]
+				flows = sorted(active_entry["flows"].items())
+				if flows:
+					parts.append("Desglose activo:")
+					for label, amount in flows:
+						parts.append(f"{label}: {_format_currency(amount)}")
+				else:
+					parts.append("Sin desglose disponible.")
+				day["investment_tooltip"] = "\n".join(parts)
+			else:
+				day["net_flow"] = snapshot.net_flow
+				parts = [
+					f"Fecha: {snapshot.snapshot_date:%d/%m/%Y}",
+					f"Total invertido ese día: {_format_currency(snapshot.net_flow)}",
+				]
+
+				flows = list(snapshot.flows.all())
+				if flows:
+					parts.append("Desglose de la inversión:")
+					for flow in flows:
+						parts.append(f"{flow.label}: {_format_currency(flow.amount)}")
+				else:
+					parts.append("Sin desglose disponible.")
+
+				day["investment_tooltip"] = "\n".join(parts)
 
 	expense_qs, expense_total = filtered_expenses(
 		scenario=scenario,
@@ -681,7 +934,7 @@ def dashboard_home(request):
 	).order_by("entry_date")
 	income_total = monthly_incomes.aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
-	# Calculator options must come from the selected month only (independent from expense filters).
+	# Calculator options come from the selected month only, independent from table filters.
 	calc_expenses_qs = (
 		Expense.objects.filter(
 			scenario=scenario,
@@ -703,12 +956,48 @@ def dashboard_home(request):
 		}
 		for exp in calc_expenses_qs[:1000]
 	]
+	chart_labels = [x["mes_nombre"] for x in chart_summary]
+	chart_values = [float(x["interes_mes"] or 0) for x in chart_summary]
 
-	chart_labels = [x["mes_nombre"] for x in monthly_summary]
-	chart_values = [float(x["interes_mes"] or 0) for x in monthly_summary]
+	latest_investment_current = investment_rows_current[-1] if investment_rows_current else None
+	investment_active_capital = active_investment_capital if is_real_scenario else (latest_investment_current.active_capital if latest_investment_current else Decimal("0"))
+	investment_daily_yield = latest_investment_current.daily_yield if latest_investment_current else Decimal("0")
+	investment_cumulative_yield = latest_investment_current.cumulative_yield if latest_investment_current else Decimal("0")
+	investment_cut_days = sum(1 for row in investment_rows_current if row.was_cut)
 
+	# Compute total interest and weighted average daily rate for currently active investment lots.
+	investment_active_interest_total = Decimal("0")
+	investment_daily_rate_pct = Decimal("0")
+	weighted_daily_rate_sum = Decimal("0")
+	weighted_amount_total = Decimal("0")
+	latest_quote_date = cuotaparte_dates[-1] if cuotaparte_dates else None
+	if latest_cuotaparte is not None and latest_quote_date is not None:
+		for lot in active_investment_lots:
+			cuota_origen = _find_cuotaparte_before_or_on(lot["snapshot_date"])
+			if cuota_origen in (None, 0):
+				continue
+			rendimiento = (latest_cuotaparte / cuota_origen) - Decimal("1")
+			days_elapsed = max((latest_quote_date - lot["snapshot_date"]).days, 1)
+			daily_rate_decimal = rendimiento / Decimal(days_elapsed)
+			investment_active_interest_total += lot["amount"] * rendimiento
+			weighted_daily_rate_sum += lot["amount"] * daily_rate_decimal
+			weighted_amount_total += lot["amount"]
+	if weighted_amount_total > 0:
+		investment_daily_rate_pct = (weighted_daily_rate_sum / weighted_amount_total) * Decimal("100")
+
+	expense_qs, expense_total = filtered_expenses(
+		scenario=scenario,
+		year=selected_year,
+		month=selected_month,
+		provider=selected_provider,
+		payment_date=selected_payment_date,
+		sort_field=effective_sort or None,
+		sort_dir=effective_dir,
+	)
 	context = {
 		"scenario": scenario,
+		"is_real_scenario": is_real_scenario,
+		"selected_scenario_id": scenario.id,
 		"available_scenarios": available_scenarios,
 		"show_cafci_panel": scenario.interest_mode == Scenario.INTEREST_MODE_WEEKLY_AVG,
 		"period_form": period_form,
@@ -727,11 +1016,32 @@ def dashboard_home(request):
 		"income_rows": monthly_incomes[:250],
 		"income_total": income_total,
 		"total_mes": _sum_interest(month_rows),
+		"total_hasta_hoy": _sum_interest([row for row in cash_rows if row["fecha"] <= today]),
 		"total_anual": _sum_interest([row for row in cash_rows if row["mes"] >= selected_month]),
 		"daily_rate_pct": float(scenario.daily_interest_rate * Decimal("100")),
 		"daily_rate_pct_input": f"{(scenario.daily_interest_rate * Decimal('100')):.4f}",
 		"adelanto_daily_rate_decimal": f"{scenario.daily_interest_rate:.6f}",
 		"calc_expense_options": calc_expense_options,
+		"real_projection_rows": real_snapshot["rows"],
+		"real_projected_income_total": real_snapshot["projected_income_total"],
+		"real_actual_income_total": real_snapshot["actual_income_total"],
+		"real_projected_expense_total": real_snapshot["projected_expense_total"],
+		"real_actual_expense_total": real_snapshot["actual_expense_total"],
+		"real_income_variance_total": real_snapshot["income_variance_total"],
+		"real_expense_variance_total": real_snapshot["expense_variance_total"],
+		"real_projected_net_total": real_snapshot["projected_net_total"],
+		"real_actual_net_total": real_snapshot["actual_net_total"],
+		"real_net_variance_total": real_snapshot["net_variance_total"],
+		"real_days_with_data": real_snapshot["days_with_real_data"],
+		"real_days_in_projection": real_snapshot["days_in_projection"],
+		"investment_rows": investment_rows,
+		"investment_active_capital": investment_active_capital,
+		"investment_daily_yield": investment_daily_yield,
+		"investment_cumulative_yield": investment_cumulative_yield,
+		"investment_cut_days": investment_cut_days,
+		"investment_daily_rate_pct": investment_daily_rate_pct,
+		"investment_last_date": latest_investment_current.snapshot_date if latest_investment_current else None,
+		"investment_active_interest_total": investment_active_interest_total,
 		"expense_sort": effective_sort,
 		"expense_dir": effective_dir,
 		"next_dir_payment_date": _next_dir_for("payment_date"),
@@ -741,6 +1051,7 @@ def dashboard_home(request):
 		"next_dir_source_tag": _next_dir_for("source_tag"),
 		"next_dir_amount": _next_dir_for("amount"),
 		"today": date.today(),
+		"home_url_with_scenario": _build_home_url(scenario=scenario, year=selected_year, month=selected_month),
 	}
 	if context["show_cafci_panel"]:
 		context.update(_build_cafci_context(request))
@@ -781,7 +1092,7 @@ def dashboard_home(request):
 
 @login_required
 def expense_list(request):
-	scenario = resolve_default_scenario()
+	scenario = _resolve_request_scenario(request)
 	qs = Expense.objects.none() if scenario is None else Expense.objects.filter(scenario=scenario).select_related("provider").order_by("-year", "month", "payment_date")
 	return render(request, "dashboard/expense_list.html", {"scenario": scenario, "expenses": qs[:400]})
 
@@ -805,11 +1116,20 @@ def expense_edit(request, pk):
 				change_summary=summary,
 			)
 			messages.success(request, "Gasto actualizado correctamente.")
-			return redirect("dashboard:home")
+			return redirect(_build_home_url(scenario=expense.scenario, year=expense.year, month=expense.month, anchor="#expensePanel"))
 	else:
 		form = ExpenseForm(instance=expense)
 
-	return render(request, "dashboard/expense_form.html", {"form": form, "expense": expense})
+	return render(
+		request,
+		"dashboard/expense_form.html",
+		{
+			"form": form,
+			"expense": expense,
+			"scenario_id": expense.scenario_id,
+			"cancel_url": _build_home_url(scenario=expense.scenario, year=expense.year, month=expense.month, anchor="#expensePanel"),
+		},
+	)
 
 
 @login_required
@@ -849,7 +1169,7 @@ def expense_delete(request, pk):
 @login_required
 @permission_required("dashboard.add_expense", raise_exception=True)
 def expense_create(request):
-	scenario = resolve_default_scenario()
+	scenario = _resolve_request_scenario(request)
 	if not scenario:
 		messages.error(request, "Primero importá un Excel para crear gastos.")
 		return redirect("dashboard:home")
@@ -876,12 +1196,16 @@ def expense_create(request):
 				change_summary=summary,
 			)
 			messages.success(request, "Gasto cargado correctamente.")
-			query = f"?year={expense.year}&month={expense.month}"
-			if expense.provider_id:
-				query += f"&provider={expense.provider_id}"
-			if expense.payment_date:
-				query += f"&payment_date={expense.payment_date.isoformat()}"
-			return redirect(f"{reverse('dashboard:home')}{query}")
+			return redirect(
+				_build_home_url(
+					scenario=expense.scenario,
+					year=expense.year,
+					month=expense.month,
+					provider=expense.provider_id,
+					payment_date=expense.payment_date,
+					anchor="#expensePanel",
+				)
+			)
 	else:
 		form = ManualExpenseForm(
 			initial={
@@ -899,36 +1223,35 @@ def expense_create(request):
 			"form": form,
 			"title": "Nuevo gasto",
 			"is_create": True,
+			"scenario_id": scenario.id,
+			"cancel_url": _build_home_url(
+				scenario=scenario,
+				year=request.GET.get("year") or scenario.year,
+				month=request.GET.get("month") or scenario.start_month,
+				anchor="#expensePanel",
+			),
 		},
 	)
 
 
 @login_required
 def expense_export_excel(request):
-	scenario = resolve_default_scenario()
+	scenario = _resolve_request_scenario(request)
 	if not scenario:
 		messages.error(request, "No hay escenario activo para exportar gastos.")
 		return redirect("dashboard:home")
 
 	provider_qs = scenario.expenses.values_list("provider_id", flat=True).distinct()
-	period_form = DashboardFilterForm(
-		request.GET or None,
-		year=scenario.year,
-		start_month=scenario.start_month,
-	)
 	expense_filter_form = ExpenseFilterForm(
 		request.GET or None,
 		provider_queryset=Provider.objects.filter(id__in=provider_qs),
 	)
 
-	selected_year = scenario.year
-	selected_month = scenario.start_month
+	selected_year = int(request.GET.get("year") or scenario.year)
+	selected_month = int(request.GET.get("month") or scenario.start_month)
 	selected_provider = None
 	selected_payment_date = None
 
-	if period_form.is_valid():
-		selected_year = period_form.cleaned_data["year"]
-		selected_month = int(period_form.cleaned_data["month"])
 	if expense_filter_form.is_valid():
 		selected_provider = expense_filter_form.cleaned_data.get("provider")
 		selected_payment_date = expense_filter_form.cleaned_data.get("payment_date")
@@ -954,7 +1277,7 @@ def expense_export_excel(request):
 @login_required
 @permission_required("dashboard.add_expense", raise_exception=True)
 def expense_import_excel(request):
-	scenario = resolve_default_scenario()
+	scenario = _resolve_request_scenario(request)
 	if not scenario:
 		messages.error(request, "No hay escenario activo para importar gastos.")
 		return redirect("dashboard:home")
@@ -989,6 +1312,93 @@ def expense_import_excel(request):
 			"form": form,
 			"result": result,
 			"back_query": request.GET.urlencode(),
+			"scenario_id": scenario.id,
+		},
+	)
+
+
+@login_required
+@permission_required("dashboard.add_incomeentry", raise_exception=True)
+def income_import_excel(request):
+	scenario = _resolve_request_scenario(request)
+	if not scenario:
+		messages.error(request, "No hay escenario activo para importar ingresos.")
+		return redirect("dashboard:home")
+
+	result = None
+	if request.method == "POST":
+		form = IncomeExcelImportForm(request.POST, request.FILES)
+		if form.is_valid():
+			try:
+				result = import_incomes_from_excel(
+					excel_bytes=form.cleaned_data["excel_file"].read(),
+					scenario=scenario,
+				)
+			except ValueError as exc:
+				messages.error(request, str(exc))
+			else:
+				ok_rows = result.created + result.updated
+				if ok_rows:
+					messages.success(
+						request,
+						f"Importación de ingresos finalizada. Nuevos: {result.created} · Actualizados: {result.updated} · Errores: {len(result.errors)}",
+					)
+				elif result.errors:
+					messages.error(request, "No se importaron filas válidas de ingresos. Revisá los errores listados.")
+	else:
+		form = IncomeExcelImportForm()
+
+	return render(
+		request,
+		"dashboard/import_incomes.html",
+		{
+			"form": form,
+			"result": result,
+			"back_query": request.GET.urlencode(),
+			"scenario_id": scenario.id,
+		},
+	)
+
+
+@login_required
+@permission_required("dashboard.add_expense", raise_exception=True)
+def investment_import_excel(request):
+	scenario = _resolve_request_scenario(request)
+	if not scenario:
+		messages.error(request, "No hay escenario activo para importar inversiones.")
+		return redirect("dashboard:home")
+
+	result = None
+	if request.method == "POST":
+		form = InvestmentExcelImportForm(request.POST, request.FILES)
+		if form.is_valid():
+			try:
+				result = import_investment_snapshots_from_excel(
+					excel_bytes=form.cleaned_data["excel_file"].read(),
+					scenario=scenario,
+					year=scenario.year,
+					daily_rate=scenario.daily_interest_rate,
+				)
+			except ValueError as exc:
+				messages.error(request, str(exc))
+			else:
+				messages.success(
+					request,
+					"Importación de inversiones finalizada. "
+					f"Días: {result.processed_days} · Corte por neteo: {result.cuts_count} · "
+					f"Rango: {result.first_date} a {result.last_date}",
+				)
+	else:
+		form = InvestmentExcelImportForm()
+
+	return render(
+		request,
+		"dashboard/import_investments.html",
+		{
+			"form": form,
+			"result": result,
+			"scenario_id": scenario.id,
+			"back_query": request.GET.urlencode(),
 		},
 	)
 
@@ -996,7 +1406,7 @@ def expense_import_excel(request):
 @login_required
 @permission_required("dashboard.add_incomeentry", raise_exception=True)
 def income_create(request):
-	scenario = resolve_default_scenario()
+	scenario = _resolve_request_scenario(request)
 	if not scenario:
 		messages.error(request, "Primero importá un Excel para crear ingresos.")
 		return redirect("dashboard:home")
@@ -1009,11 +1419,20 @@ def income_create(request):
 			obj.source_tag = "manual"
 			obj.save()
 			messages.success(request, "Ingreso cargado correctamente.")
-			return redirect("dashboard:home")
+			return redirect(_build_home_url(scenario=scenario, year=obj.entry_date.year, month=obj.entry_date.month, anchor="#expensePanel"))
 	else:
 		form = IncomeEntryForm(initial={"entry_date": date.today()})
 
-	return render(request, "dashboard/income_form.html", {"form": form, "title": "Nuevo ingreso"})
+	return render(
+		request,
+		"dashboard/income_form.html",
+		{
+			"form": form,
+			"title": "Nuevo ingreso",
+			"scenario_id": scenario.id,
+			"cancel_url": _build_home_url(scenario=scenario, anchor="#expensePanel"),
+		},
+	)
 
 
 @login_required
@@ -1028,11 +1447,20 @@ def income_edit(request, pk):
 				obj.source_tag = "manual"
 			obj.save()
 			messages.success(request, "Ingreso actualizado correctamente.")
-			return redirect("dashboard:home")
+			return redirect(_build_home_url(scenario=obj.scenario, year=obj.entry_date.year, month=obj.entry_date.month, anchor="#expensePanel"))
 	else:
 		form = IncomeEntryForm(instance=income)
 
-	return render(request, "dashboard/income_form.html", {"form": form, "title": "Editar ingreso"})
+	return render(
+		request,
+		"dashboard/income_form.html",
+		{
+			"form": form,
+			"title": "Editar ingreso",
+			"scenario_id": income.scenario_id,
+			"cancel_url": _build_home_url(scenario=income.scenario, year=income.entry_date.year, month=income.entry_date.month, anchor="#expensePanel"),
+		},
+	)
 
 
 @login_required

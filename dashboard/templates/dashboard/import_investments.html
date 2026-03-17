@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+
+{% block title %}Importar inversiones{% endblock %}
+
+{% block content %}
+<section class="panel panel-narrow">
+  <h2>Importar inversiones activas desde Hoja6 (2)</h2>
+  <p>Subí el Excel diario de <strong>GASTOS</strong>. Se tomará la fila <strong>Total</strong> de la hoja <strong>Hoja6 (2)</strong> para calcular capital activo y rendimiento diario.</p>
+
+  <form method="post" enctype="multipart/form-data" class="card-form">
+    {% csrf_token %}
+    {% if scenario_id %}<input type="hidden" name="scenario_id" value="{{ scenario_id }}">{% endif %}
+    {{ form.as_p }}
+    <button type="submit" class="btn-primary">Procesar importación</button>
+    <a href="{% url 'dashboard:home' %}{% if back_query %}?{{ back_query }}{% endif %}" class="btn-secondary">Volver al dashboard</a>
+  </form>
+
+  {% if result %}
+  <hr>
+  <h3>Resumen</h3>
+  <p>Días procesados: <strong>{{ result.processed_days }}</strong></p>
+  <p>Desde: <strong>{{ result.first_date|date:'d/m/Y' }}</strong> · Hasta: <strong>{{ result.last_date|date:'d/m/Y' }}</strong></p>
+  <p>Cortes por neteo negativo: <strong>{{ result.cuts_count }}</strong></p>
+  {% endif %}
+</section>
+{% endblock %}

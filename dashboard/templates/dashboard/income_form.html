@@ -7,9 +7,10 @@
   <h2>{{ title }}</h2>
   <form method="post" class="card-form">
     {% csrf_token %}
+    {% if scenario_id %}<input type="hidden" name="scenario_id" value="{{ scenario_id }}">{% endif %}
     {{ form.as_p }}
     <button type="submit" class="btn-primary">Guardar</button>
-    <a href="{% url 'dashboard:home' %}" class="btn-secondary">Volver</a>
+    <a href="{{ cancel_url|default:'/' }}" class="btn-secondary">Volver</a>
   </form>
 </section>
 {% endblock %}

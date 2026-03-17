@@ -126,6 +126,14 @@ class IncomeEntryForm(forms.ModelForm):
         }
 
 
+class IncomeExcelImportForm(forms.Form):
+    excel_file = forms.FileField(label="Archivo Excel de ingresos (.xlsx)")
+
+
+class InvestmentExcelImportForm(forms.Form):
+    excel_file = forms.FileField(label="Archivo Excel de inversiones (.xlsx)")
+
+
 class ExcelImportForm(forms.Form):
     excel_file = forms.FileField(label="Archivo Excel (.xlsx)")
     scenario_name = forms.CharField(label="Escenario", initial="ESCENARIO 1", max_length=120)

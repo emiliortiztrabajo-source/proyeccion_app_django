@@ -1,11 +1,11 @@
 {% extends 'base.html' %}
 
-{% block title %}Importar gastos{% endblock %}
+{% block title %}Importar ingresos{% endblock %}
 
 {% block content %}
 <section class="panel panel-narrow">
-  <h2>Importar gastos desde Excel</h2>
-  <p>Subí un archivo con el mismo formato que genera <strong>Exportar gastos</strong>.</p>
+  <h2>Importar ingresos reales desde Excel</h2>
+  <p>Podés subir un archivo con columnas <strong>Fecha</strong>, <strong>Monto</strong>, <strong>Nota</strong> y <strong>Origen</strong>, o bien la hoja <strong>INGRESOSXDIA-HABIL</strong> del formato actual.</p>
 
   <form method="post" enctype="multipart/form-data" class="card-form">
     {% csrf_token %}

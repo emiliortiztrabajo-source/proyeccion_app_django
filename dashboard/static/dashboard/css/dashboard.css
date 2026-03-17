@@ -129,9 +129,45 @@ input, select {
 .kpi-card h4 { margin: 0; font-size: 12px; opacity: .8; }
 .kpi-card p { margin: 8px 0 0; font-size: 24px; font-weight: 800; }
 .chart-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.chart-kpi-subcard { grid-column: 1 / 2; }
+.kpi-card--compact { padding: 12px 14px; }
+.kpi-card--compact h4 { font-size: 12px; margin-bottom: 6px; }
+.kpi-card--compact p { font-size: 20px; }
 .section-meta { margin: 0 0 10px; font-size: 13px; opacity: .9; }
 .section-meta--inline { margin: 0; }
 .cafci-subtitle { margin: 14px 0 8px; }
+.real-tabs {
+  display: inline-flex;
+  gap: 8px;
+  padding: 6px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  background: rgba(2, 20, 40, .42);
+}
+.real-tab {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+  font: inherit;
+}
+.real-tab.is-active {
+  background: #0f766e;
+  color: #ecfeff;
+}
+.real-tab-panel[hidden] { display: none; }
+.real-kpi-grid {
+  margin: 0 0 12px;
+}
+.real-kpi-grid--secondary {
+  margin-bottom: 16px;
+}
+.real-tab-panel.is-active {
+  display: block;
+}
 
 .panel-title-row {
   display: flex;
@@ -158,6 +194,9 @@ input, select {
 .mini-week { margin-bottom: 8px; }
 .mini-cell { border: 1px solid rgba(255,255,255,.08); border-radius: 12px; min-height: 74px; padding: 8px; background: rgba(255,255,255,.015); }
 .mini-off { opacity: .18; }
+.mini-today { position: relative; border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(96, 165, 250, .5) inset, 0 0 18px rgba(59, 130, 246, .18); background: rgba(59, 130, 246, .18); }
+.mini-today .mini-day { color: #bfdbfe; }
+.mini-badge { display: inline-flex; align-items: center; justify-content: center; margin-bottom: 4px; padding: 2px 8px; border-radius: 999px; background: #60a5fa; color: #08111f; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
 .mini-day { font-size: 19px; font-weight: 800; }
 .mini-num { margin-top: 6px; font-weight: 800; font-size: 12px; }
 .mini-sub { font-size: 10px; opacity: .65; }
@@ -322,5 +361,10 @@ th { background: rgba(15, 23, 42, .8); position: sticky; top: 0; }
     width: 100%;
     min-width: 0;
     max-width: 100%;
+  }
+  .real-tabs {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 }

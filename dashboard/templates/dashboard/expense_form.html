@@ -10,9 +10,10 @@
   {% endif %}
   <form method="post" class="card-form">
     {% csrf_token %}
+    {% if scenario_id %}<input type="hidden" name="scenario_id" value="{{ scenario_id }}">{% endif %}
     {{ form.as_p }}
     <button type="submit" class="btn-primary">{% if is_create %}Guardar gasto{% else %}Guardar cambios{% endif %}</button>
-    <a href="{% url 'dashboard:home' %}" class="btn-secondary">Cancelar</a>
+    <a href="{{ cancel_url|default:home_url_with_scenario|default:'/' }}" class="btn-secondary">Cancelar</a>
   </form>
 </section>
 {% endblock %}
