@@ -39,6 +39,14 @@ REQUIRED_COLUMNS = [
     "Origen",
 ]
 
+REAL_EXPENSE_REQUIRED_COLUMNS = [
+    "PROVEEDOR",
+    "COD. FINAN.",
+    "CLASIF. CASH",
+    "FECHA",
+    "IMPORTE TOTAL",
+]
+
 
 @dataclass
 class ExpenseImportResult:
@@ -55,6 +63,20 @@ def _clean_text(value) -> str:
 
 
 def _parse_positive_decimal(value):
+    parsed = _parse_decimal(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed.quantize(Decimal("0.01"))
+
+
+def _quantize_decimal(value):
+    parsed = _parse_decimal(value)
+    if parsed is None:
+        return None
+    return parsed.quantize(Decimal("0.01"))
+
+
+def _parse_decimal(value):
     if pd.isna(value):
         return None
     if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
@@ -68,10 +90,7 @@ def _parse_positive_decimal(value):
             parsed = Decimal(text)
         except Exception:
             return None
-
-    if parsed <= 0:
-        return None
-    return parsed.quantize(Decimal("0.01"))
+    return parsed
 
 
 def _parse_int(value):
@@ -90,7 +109,7 @@ def _parse_date(value):
     if pd.isna(value):
         return None
     try:
-        parsed = pd.to_datetime(value, errors="coerce")
+        parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
         if pd.isna(parsed):
             return None
         return parsed.date()
@@ -104,6 +123,19 @@ def _normalize_origin(value: str) -> str:
         return Expense.SOURCE_IMPORTADO
     allowed = {Expense.SOURCE_EXCEL, Expense.SOURCE_MANUAL, Expense.SOURCE_IMPORTADO}
     return normalized if normalized in allowed else ""
+
+
+def _load_expense_dataframe(excel_bytes: bytes):
+    df = pd.read_excel(BytesIO(excel_bytes), engine="openpyxl")
+    if all(col in df.columns for col in REQUIRED_COLUMNS):
+        return "export", df
+
+    real_df = pd.read_excel(BytesIO(excel_bytes), engine="openpyxl", header=1)
+    if all(col in real_df.columns for col in REAL_EXPENSE_REQUIRED_COLUMNS):
+        return "real", real_df
+
+    missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+    raise ValueError("Faltan columnas obligatorias: " + ", ".join(missing_columns))
 
 
 def export_expenses_to_excel(expenses_qs) -> bytes:
@@ -134,10 +166,7 @@ def export_expenses_to_excel(expenses_qs) -> bytes:
 
 
 def import_expenses_from_excel(*, excel_bytes: bytes, scenario: Scenario) -> ExpenseImportResult:
-    df = pd.read_excel(BytesIO(excel_bytes), engine="openpyxl")
-    missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
-    if missing_columns:
-        raise ValueError("Faltan columnas obligatorias: " + ", ".join(missing_columns))
+    detected_format, df = _load_expense_dataframe(excel_bytes)
 
     created = 0
     updated = 0
@@ -146,20 +175,40 @@ def import_expenses_from_excel(*, excel_bytes: bytes, scenario: Scenario) -> Exp
     provider_cache = {name.strip().upper(): obj for name, obj in Provider.objects.all().values_list("name", "id")}
 
     for idx, row in df.iterrows():
-        excel_row = idx + 2
+        excel_row = idx + (2 if detected_format == "export" else 3)
 
-        provider_name = _clean_text(row.get("Proveedor"))
-        nueva_clasificacion = _clean_text(row.get("Nueva Clasificación"))
-        payment_label = _clean_text(row.get("PAGO DIA"))
-        financial_code = _clean_text(row.get("Cod. Financiero"))
-        clasif_cash = _clean_text(row.get("Clasif. Cash"))
-        purchase_order = _clean_text(row.get("OC"))
-        month = _parse_int(row.get("Mes"))
-        year = _parse_int(row.get("Año"))
-        payment_date = _parse_date(row.get("Fecha de pago real"))
-        amount = _parse_positive_decimal(row.get("Monto"))
-        origin = _normalize_origin(row.get("Origen"))
-        id_value = _parse_int(row.get("ID")) if "ID" in df.columns else None
+        if detected_format == "real":
+            provider_name = _clean_text(row.get("PROVEEDOR"))
+            financial_code = _clean_text(row.get("COD. FINAN."))
+            clasif_cash = _clean_text(row.get("CLASIF. CASH"))
+            payment_date = _parse_date(row.get("FECHA"))
+            raw_amount = _parse_decimal(row.get("IMPORTE TOTAL"))
+            if raw_amount == 0:
+                continue
+            amount = _quantize_decimal(row.get("IMPORTE TOTAL"))
+            nueva_clasificacion = _clean_text(row.get("NUEVA CLASIF.")) or clasif_cash or "SIN CLASIFICAR"
+            payment_reference = _clean_text(row.get("NRO PAGADO")) or _clean_text(row.get("NRO OBJ."))
+            payment_label = payment_reference or _clean_text(row.get("COMENTARIO"))
+            if not payment_label and payment_date is not None:
+                payment_label = f"PAGADO {payment_date:%d/%m/%Y}"
+            purchase_order = payment_reference
+            month = payment_date.month if payment_date else None
+            year = payment_date.year if payment_date else None
+            origin = Expense.SOURCE_IMPORTADO
+            id_value = None
+        else:
+            provider_name = _clean_text(row.get("Proveedor"))
+            nueva_clasificacion = _clean_text(row.get("Nueva Clasificación"))
+            payment_label = _clean_text(row.get("PAGO DIA"))
+            financial_code = _clean_text(row.get("Cod. Financiero"))
+            clasif_cash = _clean_text(row.get("Clasif. Cash"))
+            purchase_order = _clean_text(row.get("OC"))
+            month = _parse_int(row.get("Mes"))
+            year = _parse_int(row.get("Año"))
+            payment_date = _parse_date(row.get("Fecha de pago real"))
+            amount = _parse_positive_decimal(row.get("Monto"))
+            origin = _normalize_origin(row.get("Origen"))
+            id_value = _parse_int(row.get("ID")) if "ID" in df.columns else None
 
         row_errors = []
         if not provider_name:
@@ -176,6 +225,8 @@ def import_expenses_from_excel(*, excel_bytes: bytes, scenario: Scenario) -> Exp
             row_errors.append("Monto obligatorio y mayor a 0")
         if not origin:
             row_errors.append("Origen inválido (EXCEL, MANUAL o IMPORTADO)")
+        if not payment_label:
+            row_errors.append("Identificación de pago obligatoria")
 
         if row_errors:
             errors.append(f"Fila {excel_row}: " + "; ".join(row_errors))

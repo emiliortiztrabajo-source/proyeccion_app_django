@@ -14,7 +14,7 @@
 </section>
 {% else %}
 <section class="dashboard-head">
-  <form method="get" id="periodFilterForm">
+  <form method="get" action="{% url 'dashboard:home' %}" id="periodFilterForm">
     <div class="dashboard-head-scenario-row">
       <div class="scenario-switch-card">
         <div class="form-row form-row--scenario">{{ period_form.scenario_id.label_tag }}{{ period_form.scenario_id }}</div>
@@ -53,13 +53,25 @@
     {% for week in calendar_payload.weeks %}
       <div class="mini-week">
       {% for day in week %}
-        <div class="mini-cell {% if not day.in_month %}mini-off{% endif %}">
+        <div class="mini-cell {% if not day.in_month %}mini-off{% endif %}{% if day.is_today %} mini-today{% endif %}"{% if is_real_scenario and day.investment_tooltip %} data-tooltip="{{ day.investment_tooltip|escape }}"{% endif %}>
           {% if day.in_month %}
+            {% if day.is_today %}
+            <div class="mini-badge">Hoy</div>
+            {% endif %}
             <div class="mini-day">{{ day.date.day }}</div>
+            {% if is_real_scenario %}
+            {% if day.net_flow is not None and day.net_flow != 0 %}
+            <div class="mini-num {% if day.net_flow >= 0 %}pos{% else %}neg{% endif %}">
+              $ {{ day.net_flow|money_compact_ar }}
+            </div>
+            <div class="mini-sub">Flujo</div>
+            {% endif %}
+            {% else %}
             <div class="mini-num {% if day.interes|default_if_none:0 >= 0 %}pos{% else %}neg{% endif %}">
               {% if day.interes == None %}—{% else %}$ {{ day.interes|money_compact_ar }}{% endif %}
             </div>
             <div class="mini-sub">Interés día</div>
+            {% endif %}
           {% endif %}
         </div>
       {% endfor %}
@@ -67,6 +79,20 @@
     {% endfor %}
   </aside>
 
+  {% if is_real_scenario %}
+  <aside class="panel stats-panel">
+    <div class="stats-grid">
+      <article class="kpi-card">
+        <h4>Rendimiento total al {{ today|date:'j-n' }}</h4>
+        <p>$ {{ investment_active_interest_total|money_ar }}</p>
+      </article>
+      <article class="kpi-card">
+        <h4>Capital invertido actualmente</h4>
+        <p>$ {{ investment_active_capital|money_ar }}</p>
+      </article>
+    </div>
+  </aside>
+  {% else %}
   <div class="panel chart-panel">
     <h3>Interés diario acumulado — Mes a mes — Año {{ selected_year }}</h3>
     <div class="chart-wrap">
@@ -81,14 +107,20 @@
         <h4>Total rendimientos proyectados desde {{ month_name }} — {{ selected_year }}</h4>
         <p>$ {{ total_anual|money_ar }}</p>
       </article>
+      <article class="kpi-card kpi-card--compact chart-kpi-subcard">
+        <h4>Rendimiento al {{ today|date:'j-n' }}</h4>
+        <p>$ {{ total_hasta_hoy|money_ar }}</p>
+      </article>
     </div>
   </div>
+  {% endif %}
 </section>
 
 <section class="panel panel-collapsible" id="expensePanel" data-panel-name="expense">
   <div class="panel-title-row">
-    <h3>🧾 Bolsas de gastos</h3>
+    <h3>{% if is_real_scenario %}🧾 Gastos e ingresos{% else %}🧾 Bolsas de gastos{% endif %}</h3>
     <div class="panel-actions">
+      {% if not is_real_scenario %}
       {% if perms.dashboard.add_expense %}
       <a
         href="{% url 'dashboard:expense_create' %}?year={{ selected_year }}&month={{ selected_month }}{% if request.GET.provider %}&provider={{ request.GET.provider }}{% endif %}{% if request.GET.payment_date %}&payment_date={{ request.GET.payment_date }}{% endif %}"
@@ -109,6 +141,24 @@
       >
         Exportar gastos
       </a>
+      {% else %}
+      {% if perms.dashboard.add_expense %}
+      <a
+        href="{% url 'dashboard:expense_import_excel' %}?scenario_id={{ scenario.id }}&year={{ selected_year }}&month={{ selected_month }}{% if request.GET.provider %}&provider={{ request.GET.provider }}{% endif %}{% if request.GET.payment_date %}&payment_date={{ request.GET.payment_date }}{% endif %}"
+        class="btn-secondary"
+      >
+        Importar gastos reales
+      </a>
+      {% endif %}
+      {% if is_real_scenario and perms.dashboard.add_incomeentry %}
+      <a
+        href="{% url 'dashboard:income_import_excel' %}?scenario_id={{ scenario.id }}&year={{ selected_year }}&month={{ selected_month }}"
+        class="btn-secondary"
+      >
+        Importar ingresos reales
+      </a>
+      {% endif %}
+      {% endif %}
       <button
         id="toggleExpensePanel"
         type="button"
@@ -122,6 +172,7 @@
   </div>
 
   <div id="expensePanelContent" class="collapsible-body" hidden>
+    {% if not is_real_scenario %}
     <form method="get" action="#expensePanel" class="filter-grid filter-grid--expense">
       <input type="hidden" name="year" value="{{ selected_year }}">
       <input type="hidden" name="month" value="{{ selected_month }}">
@@ -270,7 +321,334 @@
         </div>
       </div>
     </div>
+    {% endif %}
 
+    {% if is_real_scenario %}
+    <div class="real-tab-panel is-active" data-real-panel="expenses">
+      <form method="get" action="#expensePanel" class="filter-grid filter-grid--expense">
+        <input type="hidden" name="scenario_id" value="{{ scenario.id }}">
+        <input type="hidden" name="year" value="{{ selected_year }}">
+        <input type="hidden" name="month" value="{{ selected_month }}">
+        {% if cafci_selected_start %}<input type="hidden" name="start_date" value="{{ cafci_selected_start|date:'Y-m-d' }}">{% endif %}
+        {% if cafci_selected_end %}<input type="hidden" name="end_date" value="{{ cafci_selected_end|date:'Y-m-d' }}">{% endif %}
+        <div class="form-row">{{ expense_filter_form.provider.label_tag }}{{ expense_filter_form.provider }}</div>
+        <div class="form-row">{{ expense_filter_form.payment_date.label_tag }}{{ expense_filter_form.payment_date }}</div>
+        <button class="btn-primary" type="submit">Filtrar gastos</button>
+      </form>
+      <p class="section-meta">Total gastos (filtrado): <strong>$ {{ expense_total|money_ar }}</strong></p>
+      <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='payment_date' dir=next_dir_payment_date %}#expensePanel">
+                Fecha{% if expense_sort == 'payment_date' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'payment_date' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='payment_label' dir=next_dir_payment_label %}#expensePanel">
+                PAGO DIA{% if expense_sort == 'payment_label' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'payment_label' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='provider' dir=next_dir_provider %}#expensePanel">
+                Proveedor{% if expense_sort == 'provider' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'provider' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='nueva_clasificacion' dir=next_dir_nueva_clasificacion %}#expensePanel">
+                Nueva Clasificación{% if expense_sort == 'nueva_clasificacion' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'nueva_clasificacion' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='source_tag' dir=next_dir_source_tag %}#expensePanel">
+                Origen{% if expense_sort == 'source_tag' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'source_tag' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th>
+              <a class="sort-link" href="?{% update_query sort='amount' dir=next_dir_amount %}#expensePanel">
+                Monto{% if expense_sort == 'amount' %} {% if expense_dir == 'asc' %}↑{% else %}↓{% endif %}{% endif %}
+              </a>
+              {% if expense_sort == 'amount' %}
+                <a class="sort-clear" href="?{% update_query sort='' dir='' %}#expensePanel" title="Quitar orden">x</a>
+              {% endif %}
+            </th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for exp in expense_rows %}
+            <tr>
+              <td>{{ exp.payment_date|date:'d/m/Y'|default:'—' }}</td>
+              <td>{{ exp.payment_label }}</td>
+              <td>{{ exp.provider.name }}</td>
+              <td>{{ exp.nueva_clasificacion|default:'—' }}</td>
+              <td>{{ exp.source_tag|default:'—' }}</td>
+              <td>$ {{ exp.amount|money_ar }}</td>
+              <td>
+                <div class="row-actions">
+                  {% if perms.dashboard.change_expense %}
+                    <a href="{% url 'dashboard:expense_edit' exp.id %}?scenario_id={{ scenario.id }}">Editar</a>
+                  {% endif %}
+                  {% if perms.dashboard.delete_expense %}
+                    <form method="post" action="{% url 'dashboard:expense_delete' exp.id %}" class="inline-form change-comment-form" data-confirm-message="¿Eliminar este gasto?" data-comment-prompt="Comentario obligatorio para el historial de cambios (eliminación):">
+                      {% csrf_token %}
+                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                      <input type="hidden" name="change_comment" value="">
+                      <button type="submit" class="btn-link danger-link">Eliminar</button>
+                    </form>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="7">No hay gastos para los filtros seleccionados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="panel-title-row" style="margin-top: 12px; margin-bottom: 8px;">
+        <h4 class="cafci-subtitle" style="margin: 0;">Historial de cambios</h4>
+        <div class="panel-actions">
+          <button
+            id="toggleHistoryPanel"
+            type="button"
+            class="btn-secondary btn-toggle-panel"
+            aria-controls="historyPanelContent"
+            aria-expanded="false"
+          >
+            Ver historial
+          </button>
+        </div>
+      </div>
+
+      <div id="historyPanelContent" class="collapsible-body" hidden>
+        <div class="table-wrap short">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Acción</th>
+                <th>Gasto</th>
+                <th>Usuario</th>
+                <th>Comentario</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for log in expense_change_logs %}
+                <tr>
+                  <td>{{ log.changed_at|date:'d/m/Y H:i' }}</td>
+                  <td>{{ log.get_action_display }}</td>
+                  <td>
+                    {% if log.expense %}
+                      {{ log.expense.payment_label|default:'—' }} · $ {{ log.expense.amount|money_ar }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td>{{ log.changed_by.username|default:'sistema' }}</td>
+                  <td>{{ log.comment|default:'—' }}</td>
+                  <td>{{ log.change_summary|default:'—' }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="6">Aún no hay cambios registrados.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel-title-row" style="margin-top: 12px; margin-bottom: 8px;">
+        <h4 class="cafci-subtitle" style="margin: 0;">Ingresos del mes</h4>
+      </div>
+      <p class="section-meta">Total ingresos del mes: <strong>$ {{ income_total|money_ar }}</strong></p>
+      <div class="table-wrap short">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Origen</th>
+              <th>Nota</th>
+              <th>Monto</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for income in income_rows %}
+              <tr>
+                <td>{{ income.entry_date|date:'d/m/Y' }}</td>
+                <td>{{ income.source_tag|default:'—' }}</td>
+                <td>{{ income.note|default:'—' }}</td>
+                <td>$ {{ income.amount|money_ar }}</td>
+                <td>
+                  {% if perms.dashboard.change_incomeentry %}
+                    <a href="{% url 'dashboard:income_edit' income.id %}?scenario_id={{ scenario.id }}">Editar</a>
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="5">Aún no hay ingresos cargados para este mes.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="real-tab-panel is-active" data-real-panel="tracking">
+      <h4 class="cafci-subtitle">Inversiones activas y tasa diaria promedio</h4>
+      <p class="section-meta">
+        Tasa diaria promedio ponderada: <strong>{{ investment_daily_rate_pct|floatformat:6 }}%</strong>
+        {% if investment_last_date %}· Último día cargado: <strong>{{ investment_last_date|date:'d/m/Y' }}</strong>{% endif %}
+      </p>
+      <div class="kpi-grid real-kpi-grid">
+        <article class="kpi-card">
+          <h4>Capital invertido actualmente</h4>
+          <p>$ {{ investment_active_capital|money_ar }}</p>
+        </article>
+        <article class="kpi-card">
+          <h4>Rendimiento del día {{ today|date:'j-n' }}</h4>
+          <p>$ {{ investment_daily_yield|money_ar }}</p>
+        </article>
+        <article class="kpi-card">
+          <h4>Rendimiento acumulado</h4>
+          <p>$ {{ investment_cumulative_yield|money_ar }}</p>
+        </article>
+        <article class="kpi-card">
+          <h4>Cortes por neteo</h4>
+          <p>{{ investment_cut_days }}</p>
+        </article>
+      </div>
+      <div class="table-wrap short" style="margin-bottom: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Flujo neto</th>
+              <th>Capital activo</th>
+              <th>Rendimiento día</th>
+              <th>Rendimiento acumulado</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in investment_rows %}
+              <tr>
+                <td>{{ inv.snapshot_date|date:'d/m/Y' }}</td>
+                <td class="{% if inv.net_flow >= 0 %}pos{% else %}neg{% endif %}">$ {{ inv.net_flow|money_ar }}</td>
+                <td>$ {{ inv.active_capital|money_ar }}</td>
+                <td>$ {{ inv.daily_yield|money_ar }}</td>
+                <td>$ {{ inv.cumulative_yield|money_ar }}</td>
+                <td>{% if inv.was_cut %}Corte{% elif inv.active_capital > 0 %}Activo{% else %}Sin inversión{% endif %}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="6">Aún no hay inversiones activas importadas desde Hoja6 (2).</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <p class="section-meta">Comparación diaria entre lo proyectado y lo efectivamente cargado para {{ month_name }} {{ selected_year }}.</p>
+      <div class="kpi-grid real-kpi-grid">
+        <article class="kpi-card">
+          <h4>Ingresos proyectados</h4>
+          <p>$ {{ real_projected_income_total|money_ar }}</p>
+        </article>
+        <article class="kpi-card">
+          <h4>Ingresos reales</h4>
+          <p>$ {{ real_actual_income_total|money_ar }}</p>
+        </article>
+        <article class="kpi-card">
+          <h4>Gastos proyectados</h4>
+          <p>$ {{ real_projected_expense_total|money_ar }}</p>
+        </article>
+        <article class="kpi-card">
+          <h4>Gastos reales</h4>
+          <p>$ {{ real_actual_expense_total|money_ar }}</p>
+        </article>
+      </div>
+
+      <div class="kpi-grid real-kpi-grid real-kpi-grid--secondary">
+        <article class="kpi-card">
+          <h4>Desvío ingresos</h4>
+          <p class="{% if real_income_variance_total >= 0 %}pos{% else %}neg{% endif %}">$ {{ real_income_variance_total|money_ar }}</p>
+        </article>
+        <article class="kpi-card">
+          <h4>Desvío gastos</h4>
+          <p class="{% if real_expense_variance_total <= 0 %}pos{% else %}neg{% endif %}">$ {{ real_expense_variance_total|money_ar }}</p>
+        </article>
+        <article class="kpi-card">
+          <h4>Neto proyectado</h4>
+          <p>$ {{ real_projected_net_total|money_ar }}</p>
+        </article>
+        <article class="kpi-card">
+          <h4>Neto real</h4>
+          <p>$ {{ real_actual_net_total|money_ar }}</p>
+        </article>
+      </div>
+
+      <p class="section-meta">Días con carga real: <strong>{{ real_days_with_data }}</strong> de <strong>{{ real_days_in_projection }}</strong>.</p>
+      <div class="table-wrap short">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Ing. proyectado</th>
+              <th>Ing. real</th>
+              <th>Desvío ingreso</th>
+              <th>Gasto proyectado</th>
+              <th>Gasto real</th>
+              <th>Desvío gasto</th>
+              <th>Desvío neto</th>
+              <th>Carga real</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in real_projection_rows %}
+              <tr>
+                <td>{{ row.fecha|date:'d/m/Y' }}</td>
+                <td>$ {{ row.projected_income|money_ar }}</td>
+                <td>$ {{ row.actual_income|money_ar }}</td>
+                <td class="{% if row.income_variance >= 0 %}pos{% else %}neg{% endif %}">$ {{ row.income_variance|money_ar }}</td>
+                <td>$ {{ row.projected_expense|money_ar }}</td>
+                <td>$ {{ row.actual_expense|money_ar }}</td>
+                <td class="{% if row.expense_variance <= 0 %}pos{% else %}neg{% endif %}">$ {{ row.expense_variance|money_ar }}</td>
+                <td class="{% if row.net_variance >= 0 %}pos{% else %}neg{% endif %}">$ {{ row.net_variance|money_ar }}</td>
+                <td>
+                  {% if row.has_actual_income and row.has_actual_expense %}
+                    Ingreso y gasto
+                  {% elif row.has_actual_income %}
+                    Ingreso
+                  {% elif row.has_actual_expense %}
+                    Gasto
+                  {% else %}
+                    Pendiente
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="9">No hay proyección diaria para este período.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </section>
 
@@ -446,8 +824,10 @@
 
 {% block scripts %}
 {% if not no_data %}
+{% if not is_real_scenario %}
 {{ chart_labels|json_script:"chart-labels" }}
 {{ chart_values|json_script:"chart-values" }}
+{% endif %}
 {{ calc_expense_options|json_script:"calc-expense-options" }}
 <script>
   // Fallback local para asegurar el toggle aunque haya cache de static JS.
@@ -491,9 +871,11 @@
     });
   })();
 
+  {% if not is_real_scenario %}
   const labels = JSON.parse(document.getElementById('chart-labels').textContent);
   const values = JSON.parse(document.getElementById('chart-values').textContent);
   renderInteresChart('chartInteresMes', labels, values);
+  {% endif %}
 
   const calcOptionsEl = document.getElementById('calc-expense-options');
   const calcOptions = calcOptionsEl ? JSON.parse(calcOptionsEl.textContent) : [];
@@ -515,6 +897,68 @@
   if (typeof initAdelantoMethodToggle === 'function') {
     initAdelantoMethodToggle();
   }
+
+  (function bindRealTabs() {
+    const tabs = Array.from(document.querySelectorAll('[data-real-tab]'));
+    const panels = Array.from(document.querySelectorAll('[data-real-panel]'));
+    if (!tabs.length || !panels.length) return;
+
+    const setActive = (target) => {
+      tabs.forEach((tab) => {
+        const isActive = tab.dataset.realTab === target;
+        tab.classList.toggle('is-active', isActive);
+        tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
+      panels.forEach((panel) => {
+        const isActive = panel.dataset.realPanel === target;
+        panel.classList.toggle('is-active', isActive);
+        panel.hidden = !isActive;
+      });
+    };
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => setActive(tab.dataset.realTab));
+    });
+  })();
+
+  (function bindCalendarTooltips() {
+    const tooltip = document.createElement('div');
+    tooltip.className = 'calendar-tooltip';
+    Object.assign(tooltip.style, {
+      position: 'absolute',
+      zIndex: 9999,
+      background: 'rgba(0, 0, 0, 0.85)',
+      color: '#fff',
+      padding: '0.35rem 0.5rem',
+      borderRadius: '4px',
+      fontSize: '0.8rem',
+      lineHeight: '1.2',
+      pointerEvents: 'none',
+      whiteSpace: 'pre-line',
+      display: 'none',
+      maxWidth: '280px',
+    });
+    document.body.appendChild(tooltip);
+
+    const showTooltip = (evt, text) => {
+      if (!text) return;
+      tooltip.textContent = text;
+      tooltip.style.display = 'block';
+      const rect = evt.target.getBoundingClientRect();
+      tooltip.style.left = `${rect.right + 8}px`;
+      tooltip.style.top = `${rect.top}px`;
+    };
+
+    const hideTooltip = () => {
+      tooltip.style.display = 'none';
+    };
+
+    document.querySelectorAll('.mini-cell[data-tooltip]').forEach((cell) => {
+      cell.addEventListener('mouseenter', (evt) => showTooltip(evt, cell.dataset.tooltip));
+      cell.addEventListener('mouseleave', hideTooltip);
+      cell.addEventListener('click', (evt) => showTooltip(evt, cell.dataset.tooltip));
+    });
+  })();
 </script>
 {% endif %}
 {% endblock %}

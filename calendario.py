@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-import plotly.graph_objects as go
 from PIL import Image
 
 # =========================================================
@@ -535,7 +534,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-left_panel, spacer, right_chart = st.columns([1.90, 0.08, 2.02], gap="large")
+left_panel, right_panel = st.columns([1.90, 2.02], gap="large")
 
 with left_panel:
     dow_html = "<div class='mini-dow'>" + "".join(f"<div>{x}</div>" for x in dow_labels) + "</div>"
@@ -566,37 +565,8 @@ with left_panel:
     )
     st.markdown(cal_html, unsafe_allow_html=True)
 
-with spacer:
-    st.write("")
-
-with right_chart:
-    agg = cash_year.groupby("Mes", as_index=False).agg({"Interes diario": "sum"})
-    agg["MesNombre"] = agg["Mes"].map(MONTH_NAME_ES)
-    agg = agg[agg["Mes"] >= START_MONTH].copy()
-
-    fig_rend = go.Figure()
-    fig_rend.add_trace(
-        go.Scatter(
-            x=agg["MesNombre"],
-            y=agg["Interes diario"],
-            mode="lines+markers",
-            line=dict(width=3),
-            marker=dict(size=7),
-            hovertemplate="%{x}<br>Interés del mes: $ %{y:,.2f}<extra></extra>",
-        )
-    )
-
-    fig_rend.update_layout(
-        title=f"Interés diario acumulado — Mes a mes — Año {year}",
-        height=520,
-        margin=dict(l=40, r=20, t=60, b=40),
-        xaxis=dict(title="Mes"),
-        yaxis=dict(title="Interés acumulado ($)"),
-        showlegend=False,
-    )
-
-    st.plotly_chart(fig_rend, use_container_width=True)
-
+with right_panel:
+    # Show only the two summary cards (no chart, no chart title, no empty placeholder).
     total_mes = float(cash_mes["Interes diario"].fillna(0.0).sum())
     total_anual = float(cash_year["Interes diario"].fillna(0.0).sum())
 
@@ -604,41 +574,42 @@ with right_chart:
         """
         <style>
         .totales-box{
-          margin-top: 8px;
-          padding: 10px 12px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,.10);
-          background: rgba(255,255,255,.025);
-          display:flex;
-          gap:12px;
-          justify-content:space-between;
-          align-items:center;
-          flex-wrap:wrap;
+          width: 100%;
+          margin-top: 0;
+          display:grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap:16px;
         }
         .tot-card{
-          flex:1 1 260px;
-          padding: 8px 10px;
-          border-radius: 12px;
-          border: 1px solid rgba(255,255,255,.08);
-          background: rgba(255,255,255,.02);
+          width: 100%;
+          min-width: 0;
+          padding: 14px 14px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.03);
         }
         .tot-title{
-          font-size: 11px;
+          font-size: 12px;
           opacity: .75;
           font-weight: 800;
-          margin-bottom: 4px;
+          margin-bottom: 6px;
         }
         .tot-value{
-          font-size: 22px;
+          font-size: 26px;
           font-weight: 900;
           line-height: 1.05;
           letter-spacing: -0.3px;
         }
         .tot-sub{
-          margin-top: 4px;
-          font-size: 10px;
+          margin-top: 6px;
+          font-size: 11px;
           opacity: .65;
           font-weight: 600;
+        }
+        @media (max-width: 900px){
+          .totales-box{
+            grid-template-columns: 1fr;
+          }
         }
         </style>
         """,
