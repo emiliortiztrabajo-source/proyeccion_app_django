@@ -113,32 +113,92 @@ function readRateDecimalFromInput(inputId, fallbackValue = 0) {
   return Number(fallbackValue || 0);
 }
 
-function getSelectedRateDecimal() {
-  const metodo = document.getElementById('adelantoMetodo')?.value || 'aritmetico';
-  const defaultRate = Number(document.querySelector('button[onclick="calcAdelantoFromButton(this)"]')?.dataset?.rateDecimal || 0);
-  const arith = readRateDecimalFromInput('server_rate_arith', defaultRate);
-  const geom = readRateDecimalFromInput('server_rate_geom', arith);
-  return metodo === 'geometrico' ? geom : arith;
+function getSelectedRateSource() {
+  return document.getElementById('rateSource')?.value || '';
 }
 
-// Update meta display (method name and shown rate)
+function getSelectedRateOption() {
+  return document.getElementById('rateSource')?.selectedOptions?.[0] || null;
+}
+
+function getSelectedRateDecimal() {
+  const source = getSelectedRateSource();
+  const defaultRate = Number(document.querySelector('button[onclick="calcAdelantoFromButton(this)"]')?.dataset?.rateDecimal || 0);
+  if (source === 'real') {
+    const metodo = document.getElementById('adelantoMetodo')?.value || 'aritmetico';
+    const arith = readRateDecimalFromInput('server_rate_arith', defaultRate);
+    const geom = readRateDecimalFromInput('server_rate_geom', arith);
+    return metodo === 'geometrico' ? geom : arith;
+  }
+  return defaultRate;
+}
+
 function updateAdelantoMetaDisplay() {
   const metodoEl = document.getElementById('adelantoMetodo');
-  const metodoMeta = document.getElementById('metaMetodo');
+  const metodoMeta = document.getElementById('metaMetodo') || { textContent: '' };
   const tasaMeta = document.getElementById('metaTasa');
-  if (!metodoEl || !metodoMeta || !tasaMeta) return;
-  const metodo = metodoEl.value;
+  if (!tasaMeta) return;
+  const metodo = metodoEl?.value || 'aritmetico';
   const rate = getSelectedRateDecimal();
   metodoMeta.textContent = metodo === 'geometrico' ? 'Geométrico' : 'Aritmético';
   tasaMeta.textContent = (rate * 100).toFixed(6) + '%';
 }
 
+function updateFciRateFromSource() {
+  const fciTasa = document.getElementById('fciTasa');
+  if (!fciTasa) return;
+  const selectedOption = getSelectedRateOption();
+  const optionRatePct = selectedOption?.dataset?.ratePct;
+  if (optionRatePct) {
+    fciTasa.value = optionRatePct;
+    return;
+  }
+
+  const defaultRate = Number(document.querySelector('button[onclick="calcAdelantoFromButton(this)"]')?.dataset?.rateDecimal || 0);
+  const arith = readRateDecimalFromInput('server_rate_arith', defaultRate);
+  fciTasa.value = (arith * 100).toFixed(6);
+}
+
+function refreshCalculatedOutputs() {
+  const adelantoResult = document.getElementById('adelantoResultado');
+  const adelantoOption = document.getElementById('adelantoPago')?.selectedOptions?.[0];
+  if (adelantoResult?.textContent?.trim() && Number(adelantoOption?.dataset?.amount || 0) > 0) {
+    calcAdelanto(getSelectedRateDecimal());
+  }
+
+  const fciResult = document.getElementById('fciResultado');
+  const fciCapital = Number(document.getElementById('fciCapital')?.value || 0);
+  const fciDays = Number(document.getElementById('fciDias')?.value || 0);
+  if (fciResult?.textContent?.trim() && fciCapital > 0 && fciDays > 0) {
+    calcFCI();
+  }
+}
+
 // Initialize selector behaviour
 function initAdelantoMethodToggle() {
   const metodoEl = document.getElementById('adelantoMetodo');
-  if (!metodoEl) return;
-  metodoEl.addEventListener('change', updateAdelantoMetaDisplay);
+  const adelantoModeEl = document.getElementById('adelantoModo');
+  const rateSourceEl = document.getElementById('rateSource');
+  if (!metodoEl && !adelantoModeEl && !rateSourceEl) return;
+
+  const onChange = () => {
+    updateAdelantoMetaDisplay();
+    updateFciRateFromSource();
+    refreshCalculatedOutputs();
+  };
+
+  if (metodoEl) {
+    metodoEl.addEventListener('change', onChange);
+  }
+  if (adelantoModeEl) {
+    adelantoModeEl.addEventListener('change', onChange);
+  }
+  if (rateSourceEl) {
+    rateSourceEl.addEventListener('change', onChange);
+  }
+
   updateAdelantoMetaDisplay();
+  updateFciRateFromSource();
 }
 
 // Button handler: pick rate via selector and compute
@@ -288,9 +348,8 @@ function initAdelantoCalculator(rawRows) {
 function calcFCI() {
   const capital = Number(document.getElementById('fciCapital')?.value || 0);
   const days = Number(document.getElementById('fciDias')?.value || 0);
-  const ratePct = Number(document.getElementById('fciTasa')?.value || 0);
+  const rate = getSelectedRateDecimal();
   const mode = document.getElementById('fciModo')?.value || 'Compuesto (capitaliza)';
-  const rate = ratePct / 100;
 
   const out = document.getElementById('fciResultado');
   if (!out) return;
@@ -329,9 +388,11 @@ function initExpensePanelToggle() {
     return value !== null && value !== '';
   });
 
+  const collapsedLabel = toggleButton.dataset.collapsedLabel || 'Ver gastos';
+  const expandedLabel = toggleButton.dataset.expandedLabel || 'Ocultar gastos';
   const setExpanded = (expanded) => {
     toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    toggleButton.textContent = expanded ? 'Ocultar gastos' : 'Ver gastos';
+    toggleButton.textContent = expanded ? expandedLabel : collapsedLabel;
     panelContent.hidden = !expanded;
     try {
       localStorage.setItem(storageKey, expanded ? '1' : '0');
