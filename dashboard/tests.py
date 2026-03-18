@@ -420,6 +420,10 @@ class DashboardHomeCalculatorContextTests(TestCase):
 			entry_date=date(2026, 3, 17),
 			amount=Decimal("1500.00"),
 			source_tag="importado",
+			classification="LIBRE",
+			account="Cuenta: 7185-4056/1",
+			description="Ingreso diario",
+			remarks="Ingresos",
 			note="Ingreso diario",
 		)
 
@@ -430,9 +434,57 @@ class DashboardHomeCalculatorContextTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		self.assertContains(response, "Gastos e ingresos")
+		self.assertContains(response, 'data-real-tab="expenses"')
+		self.assertContains(response, 'data-real-tab="incomes"')
+		self.assertContains(response, 'data-real-tab="tracking"')
 		self.assertContains(response, "Ingresos del mes")
+		self.assertContains(response, "Clasificacion")
+		self.assertContains(response, "Cuenta: 7185-4056/1")
 		self.assertContains(response, "Ingreso diario")
 		self.assertContains(response, "$ 1.500,00")
+
+	def test_dashboard_home_real_incomes_tab_paginates_results(self):
+		user = get_user_model().objects.create_superuser(
+			username="realincomepagination",
+			email="realincomepagination@example.com",
+			password="secret123",
+		)
+		self.client.force_login(user)
+
+		scenario = Scenario.objects.create(
+			name="ESCENARIO 3 - PROYECCION REAL",
+			year=2026,
+			start_month=3,
+			daily_interest_rate=Decimal("0.001"),
+		)
+		DailyProjection.objects.create(
+			scenario=scenario,
+			projection_date=date(2026, 3, 5),
+			gastos_proyectados_excel=Decimal("100.00"),
+			ingresos_financieros_excel=Decimal("250.00"),
+		)
+		for idx in range(105):
+			IncomeEntry.objects.create(
+				scenario=scenario,
+				entry_date=date(2026, 3, 17),
+				amount=Decimal("100.00"),
+				source_tag="movimientos",
+				classification="LIBRE",
+				account="Cuenta prueba",
+				description=f"Ingreso {idx}",
+				remarks="Ingresos",
+			)
+
+		response = self.client.get(
+			reverse("dashboard:home"),
+			{"scenario_id": scenario.id, "year": 2026, "month": 3, "real_tab": "incomes", "income_page": 2},
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Pagina")
+		self.assertContains(response, "2</strong> de <strong>2")
+		self.assertContains(response, "Ingreso 104")
+		self.assertNotContains(response, "Ingreso 94")
 
 	def test_dashboard_home_real_scenario_uses_current_active_metrics_and_breakdown_tooltip(self):
 		user = get_user_model().objects.create_user(username="realtester", password="secret123")
@@ -685,6 +737,125 @@ class IncomeExcelImportTests(TestCase):
 		updated_entry = IncomeEntry.objects.get(scenario=scenario, entry_date=date(2026, 3, 17))
 		self.assertEqual(updated_entry.amount, Decimal("1500.00"))
 		self.assertEqual(updated_entry.note, "real")
+
+	def test_import_incomes_from_movimientos_workbook_keeps_each_income_row(self):
+		scenario = Scenario.objects.create(name="ESCENARIO REAL", year=2026, start_month=3, daily_interest_rate=Decimal("0.001"))
+
+		df = pd.DataFrame(
+			[
+				{
+					"CLASIFICACION": "LIBRE",
+					"CTA": "Cuenta: 7185-4056/1",
+					"Fecha": "02/03/2026",
+					"Descripción": "Cobro 1",
+					"Importe": 1000,
+					"Saldo": 5000,
+					"Aclaraciones": "Ingresos",
+				},
+				{
+					"CLASIFICACION": "LIBRE",
+					"CTA": "Cuenta: 7185-4056/1",
+					"Fecha": "02/03/2026",
+					"Descripción": "Cobro 2",
+					"Importe": 2500.5,
+					"Saldo": 7500.5,
+					"Aclaraciones": "Ingresos",
+				},
+				{
+					"CLASIFICACION": "LIBRE",
+					"CTA": "Cuenta: 7185-4056/1",
+					"Fecha": "02/03/2026",
+					"Descripción": "Pago",
+					"Importe": -400,
+					"Saldo": 7100.5,
+					"Aclaraciones": "Gastos",
+				},
+				{
+					"CLASIFICACION": "LIBRE",
+					"CTA": "Cuenta: 7185-4056/1",
+					"Fecha": "03/03/2026",
+					"Descripción": "Cobro 3",
+					"Importe": 900,
+					"Saldo": 8000.5,
+					"Aclaraciones": "Ingresos",
+				},
+			]
+		)
+		buffer = BytesIO()
+		with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+			df.to_excel(writer, sheet_name="Movimientos", index=False)
+
+		result = import_incomes_from_excel(excel_bytes=buffer.getvalue(), scenario=scenario)
+
+		self.assertEqual(result.created, 3)
+		self.assertEqual(result.updated, 0)
+		self.assertEqual(result.errors, [])
+		self.assertEqual(IncomeEntry.objects.filter(scenario=scenario).count(), 3)
+		first_income = IncomeEntry.objects.get(scenario=scenario, entry_date=date(2026, 3, 2), description="Cobro 1")
+		second_income = IncomeEntry.objects.get(scenario=scenario, entry_date=date(2026, 3, 2), description="Cobro 2")
+		march_3 = IncomeEntry.objects.get(scenario=scenario, entry_date=date(2026, 3, 3), description="Cobro 3")
+		self.assertEqual(first_income.amount, Decimal("1000.00"))
+		self.assertEqual(second_income.amount, Decimal("2500.50"))
+		self.assertEqual(march_3.amount, Decimal("900.00"))
+		self.assertEqual(first_income.source_tag, "movimientos")
+		self.assertEqual(first_income.classification, "LIBRE")
+		self.assertEqual(first_income.account, "Cuenta: 7185-4056/1")
+		self.assertEqual(first_income.remarks, "Ingresos")
+
+	def test_import_incomes_from_movimientos_replaces_only_dates_present_in_file(self):
+		scenario = Scenario.objects.create(name="ESCENARIO REAL", year=2026, start_month=3, daily_interest_rate=Decimal("0.001"))
+		IncomeEntry.objects.create(
+			scenario=scenario,
+			entry_date=date(2026, 3, 2),
+			amount=Decimal("100.00"),
+			source_tag="movimientos",
+			description="Viejo 2",
+			remarks="Ingresos",
+		)
+		IncomeEntry.objects.create(
+			scenario=scenario,
+			entry_date=date(2026, 3, 4),
+			amount=Decimal("400.00"),
+			source_tag="movimientos",
+			description="Viejo 4",
+			remarks="Ingresos",
+		)
+
+		df = pd.DataFrame(
+			[
+				{
+					"CLASIFICACION": "LIBRE",
+					"CTA": "Cuenta: 7185-4056/1",
+					"Fecha": "02/03/2026",
+					"DescripciÃ³n": "Nuevo 2",
+					"Importe": 200,
+					"Saldo": 1200,
+					"Aclaraciones": "Ingresos",
+				},
+				{
+					"CLASIFICACION": "LIBRE",
+					"CTA": "Cuenta: 7185-4056/1",
+					"Fecha": "03/03/2026",
+					"DescripciÃ³n": "Nuevo 3",
+					"Importe": 300,
+					"Saldo": 1500,
+					"Aclaraciones": "Ingresos",
+				},
+			]
+		)
+		buffer = BytesIO()
+		with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+			df.to_excel(writer, sheet_name="Movimientos", index=False)
+
+		result = import_incomes_from_excel(excel_bytes=buffer.getvalue(), scenario=scenario)
+
+		self.assertEqual(result.created, 2)
+		self.assertEqual(result.updated, 1)
+		self.assertEqual(IncomeEntry.objects.filter(scenario=scenario).count(), 3)
+		self.assertFalse(IncomeEntry.objects.filter(scenario=scenario, description="Viejo 2").exists())
+		self.assertTrue(IncomeEntry.objects.filter(scenario=scenario, description="Viejo 4").exists())
+		self.assertTrue(IncomeEntry.objects.filter(scenario=scenario, description="Nuevo 2").exists())
+		self.assertTrue(IncomeEntry.objects.filter(scenario=scenario, description="Nuevo 3").exists())
 
 
 class ExpenseExcelImportTests(TestCase):

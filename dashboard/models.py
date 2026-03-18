@@ -117,6 +117,11 @@ class IncomeEntry(models.Model):
 	amount = models.DecimalField(max_digits=20, decimal_places=2)
 	source_tag = models.CharField(max_length=100, default="excel")
 	note = models.CharField(max_length=255, blank=True)
+	classification = models.CharField(max_length=120, blank=True)
+	account = models.CharField(max_length=160, blank=True)
+	description = models.CharField(max_length=255, blank=True)
+	balance = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+	remarks = models.CharField(max_length=120, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 

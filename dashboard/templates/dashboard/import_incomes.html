@@ -5,13 +5,13 @@
 {% block content %}
 <section class="panel panel-narrow">
   <h2>Importar ingresos reales desde Excel</h2>
-  <p>Podés subir un archivo con columnas <strong>Fecha</strong>, <strong>Monto</strong>, <strong>Nota</strong> y <strong>Origen</strong>, o bien la hoja <strong>INGRESOSXDIA-HABIL</strong> del formato actual.</p>
+  <p>Podes subir un archivo con columnas <strong>Fecha</strong>, <strong>Monto</strong>, <strong>Nota</strong> y <strong>Origen</strong>, la hoja <strong>INGRESOSXDIA-HABIL</strong> del formato anterior, o el resumen mensual bancario con hoja <strong>Movimientos</strong>. En este ultimo caso se importan las filas marcadas como <strong>Ingresos</strong> una por una, conservando sus columnas originales.</p>
 
   <form method="post" enctype="multipart/form-data" class="card-form">
     {% csrf_token %}
     {% if scenario_id %}<input type="hidden" name="scenario_id" value="{{ scenario_id }}">{% endif %}
     {{ form.as_p }}
-    <button type="submit" class="btn-primary">Procesar importación</button>
+    <button type="submit" class="btn-primary">Procesar importacion</button>
     <a href="{% url 'dashboard:home' %}{% if back_query %}?{{ back_query }}{% endif %}" class="btn-secondary">Volver al dashboard</a>
   </form>
 
@@ -21,7 +21,7 @@
   <p>Filas procesadas: <strong>{{ result.processed }}</strong></p>
   <p>Filas importadas correctamente: <strong>{{ result.created|add:result.updated }}</strong></p>
   <p>Nuevas: <strong>{{ result.created }}</strong></p>
-  <p>Actualizadas: <strong>{{ result.updated }}</strong></p>
+  <p>Reemplazadas: <strong>{{ result.updated }}</strong></p>
   <p>Con error: <strong>{{ result.errors|length }}</strong></p>
 
   {% if result.errors %}

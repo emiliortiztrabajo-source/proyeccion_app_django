@@ -56,23 +56,27 @@ body {
   position: relative;
 }
 #periodFilterForm {
-  position: relative;
   width: 100%;
   display: block;
 }
 .dashboard-head h2 { margin: 0; }
 .dashboard-head-scenario-row {
-  position: absolute;
-  top: 150px;
-  right: 0;
-  width: 280px;
+  flex: 0 1 320px;
+  width: min(320px, 100%);
 }
 .dashboard-head-title-row {
   display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 12px;
+  flex-wrap: wrap;
+}
+.dashboard-head-title-group {
+  display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin: 0 0 12px;
-  padding-right: 300px;
+  min-width: 0;
 }
 .dashboard-head-period-row {
   display: grid;
@@ -108,6 +112,7 @@ body {
 .filter-grid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; align-items: end; }
 .filter-grid--period { grid-template-columns: 1fr; gap: 0; align-items: stretch; }
 .filter-grid--expense { grid-template-columns: minmax(220px, 1.2fr) minmax(180px, .9fr) auto; margin-bottom: 12px; }
+.filter-grid--income { grid-template-columns: repeat(5, minmax(150px, 1fr)) auto; margin-bottom: 12px; }
 .filter-grid--cafci { grid-template-columns: repeat(2, minmax(170px, 220px)) auto; margin-bottom: 12px; }
 .form-row { display: flex; flex-direction: column; gap: 5px; }
 label { font-size: 12px; opacity: .85; }
@@ -339,7 +344,7 @@ th { background: rgba(15, 23, 42, .8); position: sticky; top: 0; }
 
 @media (max-width: 1100px) {
   .filter-grid, .kpi-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .filter-grid--period, .filter-grid--expense, .filter-grid--cafci { grid-template-columns: 1fr; }
+  .filter-grid--period, .filter-grid--expense, .filter-grid--income, .filter-grid--cafci { grid-template-columns: 1fr; }
   .main-grid, .double-grid { grid-template-columns: 1fr; }
   .chart-kpi-grid { grid-template-columns: 1fr; }
   .chart-wrap { height: 300px; }
@@ -347,10 +352,9 @@ th { background: rgba(15, 23, 42, .8); position: sticky; top: 0; }
   .dashboard-head-title-row {
     flex-direction: column;
     align-items: flex-start;
-    padding-right: 0;
   }
   .dashboard-head-scenario-row {
-    position: static;
+    flex-basis: 100%;
     width: 100%;
     margin-bottom: 8px;
   }

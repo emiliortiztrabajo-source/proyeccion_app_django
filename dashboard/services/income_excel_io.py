@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 from decimal import Decimal
 from io import BytesIO
+import unicodedata
 
 import pandas as pd
 
@@ -22,11 +22,23 @@ class IncomeImportResult:
     errors: list[str]
 
 
+def _normalize_column_name(value):
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return " ".join(text.strip().lower().split())
+
+
+def _clean_text(value):
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
 def _parse_date(value):
     if pd.isna(value):
         return None
     try:
-        parsed = pd.to_datetime(value, errors="coerce")
+        parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
     except Exception:
         return None
     if pd.isna(parsed):
@@ -48,15 +60,7 @@ def _parse_amount(value):
             parsed = Decimal(text)
         except Exception:
             return None
-    if parsed <= 0:
-        return None
     return parsed.quantize(Decimal("0.01"))
-
-
-def _clean_text(value):
-    if pd.isna(value):
-        return ""
-    return str(value).strip()
 
 
 def _normalize_source(value):
@@ -64,13 +68,96 @@ def _normalize_source(value):
     return normalized or "importado"
 
 
+def _read_excel(excel_bytes: bytes, **kwargs):
+    return pd.read_excel(BytesIO(excel_bytes), engine="openpyxl", **kwargs)
+
+
 def _detect_tabular_format(excel_bytes: bytes):
-    df = pd.read_excel(BytesIO(excel_bytes), engine="openpyxl")
+    df = _read_excel(excel_bytes)
     return all(column in df.columns for column in TABULAR_REQUIRED_COLUMNS), df
 
 
+def _match_movements_columns(df):
+    normalized_map = {_normalize_column_name(column): column for column in df.columns}
+    if "descripcion" not in normalized_map:
+        for column in df.columns:
+            normalized = _normalize_column_name(column)
+            if normalized.startswith("descripci"):
+                normalized_map["descripcion"] = column
+                break
+    required = {
+        "clasificacion": None,
+        "cta": None,
+        "fecha": None,
+        "descripcion": None,
+        "importe": None,
+        "saldo": None,
+        "aclaraciones": None,
+    }
+    for key in required:
+        required[key] = normalized_map.get(key)
+    if any(value is None for value in required.values()):
+        return None
+    return required
+
+
+def _load_movements_income_rows(excel_bytes: bytes):
+    try:
+        df = _read_excel(excel_bytes, sheet_name="Movimientos")
+    except ValueError as exc:
+        raise ValueError(
+            "El Excel no tiene el formato esperado. Usa columnas Fecha/Monto, la hoja INGRESOSXDIA-HABIL o la hoja Movimientos."
+        ) from exc
+
+    columns = _match_movements_columns(df)
+    if not columns:
+        raise ValueError(
+            "El Excel no tiene el formato esperado. Usa columnas Fecha/Monto, la hoja INGRESOSXDIA-HABIL o la hoja Movimientos."
+        )
+
+    rows = []
+    errors = []
+    for idx, row in df.iterrows():
+        excel_row = idx + 2
+        entry_date = _parse_date(row.get(columns["fecha"]))
+        amount = _parse_amount(row.get(columns["importe"]))
+        classification = _clean_text(row.get(columns["clasificacion"]))
+        account = _clean_text(row.get(columns["cta"]))
+        description = _clean_text(row.get(columns["descripcion"]))
+        remarks = _clean_text(row.get(columns["aclaraciones"]))
+        balance = _parse_amount(row.get(columns["saldo"]))
+
+        if remarks.lower() != "ingresos":
+            continue
+
+        row_errors = []
+        if entry_date is None:
+            row_errors.append("Fecha obligatoria y valida")
+        if amount is None or amount <= 0:
+            row_errors.append("Importe obligatorio y mayor a 0")
+        if row_errors:
+            errors.append(f"Fila {excel_row}: " + "; ".join(row_errors))
+            continue
+
+        rows.append(
+            {
+                "entry_date": entry_date,
+                "amount": amount,
+                "classification": classification,
+                "account": account,
+                "description": description,
+                "balance": balance,
+                "remarks": remarks,
+                "note": description,
+                "source_tag": "movimientos",
+            }
+        )
+
+    return rows, errors
+
+
 def _load_fallback_income_rows(excel_bytes: bytes):
-    df = pd.read_excel(BytesIO(excel_bytes), sheet_name=FALLBACK_SHEET_NAME, engine="openpyxl", header=1)
+    df = _read_excel(excel_bytes, sheet_name=FALLBACK_SHEET_NAME, header=1)
     cols = list(df.columns)
 
     def is_day_col(col):
@@ -88,7 +175,7 @@ def _load_fallback_income_rows(excel_bytes: bytes):
 
     if not pairs:
         raise ValueError(
-            "El Excel no tiene el formato esperado. Usá una hoja con columnas Fecha/Monto o la solapa INGRESOSXDIA-HABIL."
+            "El Excel no tiene el formato esperado. Usa una hoja con columnas Fecha/Monto, la solapa INGRESOSXDIA-HABIL o la hoja Movimientos."
         )
 
     rows = []
@@ -103,11 +190,7 @@ def _load_fallback_income_rows(excel_bytes: bytes):
     return merged
 
 
-def import_incomes_from_excel(*, excel_bytes: bytes, scenario: Scenario) -> IncomeImportResult:
-    is_tabular, df = _detect_tabular_format(excel_bytes)
-    if not is_tabular:
-        df = _load_fallback_income_rows(excel_bytes)
-
+def _import_tabular_rows(*, df, scenario: Scenario):
     created = 0
     updated = 0
     errors: list[str] = []
@@ -121,8 +204,8 @@ def import_incomes_from_excel(*, excel_bytes: bytes, scenario: Scenario) -> Inco
 
         row_errors = []
         if entry_date is None:
-            row_errors.append("Fecha obligatoria y válida")
-        if amount is None:
+            row_errors.append("Fecha obligatoria y valida")
+        if amount is None or amount <= 0:
             row_errors.append("Monto obligatorio y mayor a 0")
         if row_errors:
             errors.append(f"Fila {excel_row}: " + "; ".join(row_errors))
@@ -148,3 +231,53 @@ def import_incomes_from_excel(*, excel_bytes: bytes, scenario: Scenario) -> Inco
         updated += 1
 
     return IncomeImportResult(processed=len(df.index), created=created, updated=updated, errors=errors)
+
+
+def _import_movement_rows(*, rows, scenario: Scenario, errors):
+    entry_dates = sorted({row["entry_date"] for row in rows})
+    deleted_count = 0
+    for entry_date in entry_dates:
+        deleted_count += IncomeEntry.objects.filter(
+            scenario=scenario,
+            source_tag="movimientos",
+            entry_date=entry_date,
+        ).delete()[0]
+
+    IncomeEntry.objects.bulk_create(
+        [
+            IncomeEntry(
+                scenario=scenario,
+                entry_date=row["entry_date"],
+                amount=row["amount"],
+                source_tag=row["source_tag"],
+                note=row["note"],
+                classification=row["classification"],
+                account=row["account"],
+                description=row["description"],
+                balance=row["balance"],
+                remarks=row["remarks"],
+            )
+            for row in rows
+        ],
+        batch_size=1000,
+    )
+    return IncomeImportResult(
+        processed=len(rows) + len(errors),
+        created=len(rows),
+        updated=deleted_count,
+        errors=errors,
+    )
+
+
+def import_incomes_from_excel(*, excel_bytes: bytes, scenario: Scenario) -> IncomeImportResult:
+    is_tabular, df = _detect_tabular_format(excel_bytes)
+    if is_tabular:
+        return _import_tabular_rows(df=df, scenario=scenario)
+
+    try:
+        movement_rows, movement_errors = _load_movements_income_rows(excel_bytes)
+    except ValueError:
+        df = _load_fallback_income_rows(excel_bytes)
+        return _import_tabular_rows(df=df, scenario=scenario)
+
+    return _import_movement_rows(rows=movement_rows, scenario=scenario, errors=movement_errors)

@@ -120,10 +120,30 @@ class ManualExpenseForm(forms.ModelForm):
 class IncomeEntryForm(forms.ModelForm):
     class Meta:
         model = IncomeEntry
-        fields = ["entry_date", "amount", "note"]
+        fields = ["entry_date", "amount", "classification", "account", "description", "balance", "remarks", "note"]
         widgets = {
             "entry_date": forms.DateInput(attrs={"type": "date"}),
         }
+
+
+class IncomeFilterForm(forms.Form):
+    entry_date = forms.DateField(label="Fecha", required=False, widget=forms.DateInput(attrs={"type": "date"}))
+    classification = forms.ChoiceField(label="Clasificacion", required=False, choices=[])
+    account = forms.ChoiceField(label="Cuenta", required=False, choices=[])
+    remarks = forms.ChoiceField(label="Aclaraciones", required=False, choices=[])
+    description_query = forms.CharField(label="Descripcion", required=False)
+
+    def __init__(self, *args, classification_choices=None, account_choices=None, remarks_choices=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["classification"].choices = [("", "Todas las clasificaciones")] + [
+            (value, value) for value in (classification_choices or [])
+        ]
+        self.fields["account"].choices = [("", "Todas las cuentas")] + [
+            (value, value) for value in (account_choices or [])
+        ]
+        self.fields["remarks"].choices = [("", "Todas las aclaraciones")] + [
+            (value, value) for value in (remarks_choices or [])
+        ]
 
 
 class IncomeExcelImportForm(forms.Form):

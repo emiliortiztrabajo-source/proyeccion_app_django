@@ -15,13 +15,8 @@
 {% else %}
 <section class="dashboard-head">
   <form method="get" action="{% url 'dashboard:home' %}" id="periodFilterForm">
-    <div class="dashboard-head-scenario-row">
-      <div class="scenario-switch-card">
-        <div class="form-row form-row--scenario">{{ period_form.scenario_id.label_tag }}{{ period_form.scenario_id }}</div>
-      </div>
-    </div>
-
     <div class="dashboard-head-title-row">
+      <div class="dashboard-head-title-group">
       <h2>📈 Rendimiento FCI — Interés diario</h2>
       <details class="help-inline help-inline--head">
         <summary aria-label="Ayuda sobre esta pantalla">?</summary>
@@ -31,6 +26,12 @@
           Con eso se estiman rendimientos diarios, acumulados y escenarios de adelanto/proyección.
         </div>
       </details>
+      </div>
+      <div class="dashboard-head-scenario-row">
+        <div class="scenario-switch-card">
+          <div class="form-row form-row--scenario">{{ period_form.scenario_id.label_tag }}{{ period_form.scenario_id }}</div>
+        </div>
+      </div>
     </div>
 
     <div class="dashboard-head-period-row">
@@ -268,6 +269,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
 
       <div class="panel-title-row" style="margin-top: 12px; margin-bottom: 8px;">
         <h4 class="cafci-subtitle" style="margin: 0;">Historial de cambios</h4>
@@ -324,7 +326,13 @@
     {% endif %}
 
     {% if is_real_scenario %}
-    <div class="real-tab-panel is-active" data-real-panel="expenses">
+    <div class="real-tabs" role="tablist" aria-label="Vista de datos reales">
+      <a class="real-tab {% if active_real_tab == 'expenses' %}is-active{% endif %}" data-real-tab="expenses" aria-selected="{% if active_real_tab == 'expenses' %}true{% else %}false{% endif %}" href="?{% update_query real_tab='expenses' %}#expensePanel">Gastos</a>
+      <a class="real-tab {% if active_real_tab == 'incomes' %}is-active{% endif %}" data-real-tab="incomes" aria-selected="{% if active_real_tab == 'incomes' %}true{% else %}false{% endif %}" href="?{% update_query real_tab='incomes' %}#expensePanel">Ingresos</a>
+      <a class="real-tab {% if active_real_tab == 'tracking' %}is-active{% endif %}" data-real-tab="tracking" aria-selected="{% if active_real_tab == 'tracking' %}true{% else %}false{% endif %}" href="?{% update_query real_tab='tracking' %}#expensePanel">Seguimiento</a>
+    </div>
+
+    <div class="real-tab-panel {% if active_real_tab == 'expenses' %}is-active{% endif %}" data-real-panel="expenses" {% if active_real_tab != 'expenses' %}hidden{% endif %}>
       <form method="get" action="#expensePanel" class="filter-grid filter-grid--expense">
         <input type="hidden" name="scenario_id" value="{{ scenario.id }}">
         <input type="hidden" name="year" value="{{ selected_year }}">
@@ -421,6 +429,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
 
       <div class="panel-title-row" style="margin-top: 12px; margin-bottom: 8px;">
         <h4 class="cafci-subtitle" style="margin: 0;">Historial de cambios</h4>
@@ -474,18 +483,41 @@
         </div>
       </div>
 
+    </div>
+
+    <div class="real-tab-panel {% if active_real_tab == 'incomes' %}is-active{% endif %}" data-real-panel="incomes" {% if active_real_tab != 'incomes' %}hidden{% endif %}>
+      <form method="get" action="#expensePanel" class="filter-grid filter-grid--income">
+        <input type="hidden" name="scenario_id" value="{{ scenario.id }}">
+        <input type="hidden" name="year" value="{{ selected_year }}">
+        <input type="hidden" name="month" value="{{ selected_month }}">
+        {% if cafci_selected_start %}<input type="hidden" name="start_date" value="{{ cafci_selected_start|date:'Y-m-d' }}">{% endif %}
+        {% if cafci_selected_end %}<input type="hidden" name="end_date" value="{{ cafci_selected_end|date:'Y-m-d' }}">{% endif %}
+        <input type="hidden" name="real_tab" value="incomes">
+        <div class="form-row">{{ income_filter_form.entry_date.label_tag }}{{ income_filter_form.entry_date }}</div>
+        <div class="form-row">{{ income_filter_form.classification.label_tag }}{{ income_filter_form.classification }}</div>
+        <div class="form-row">{{ income_filter_form.account.label_tag }}{{ income_filter_form.account }}</div>
+        <div class="form-row">{{ income_filter_form.remarks.label_tag }}{{ income_filter_form.remarks }}</div>
+        <div class="form-row">{{ income_filter_form.description_query.label_tag }}{{ income_filter_form.description_query }}</div>
+        <button class="btn-primary" type="submit">Filtrar ingresos</button>
+      </form>
       <div class="panel-title-row" style="margin-top: 12px; margin-bottom: 8px;">
         <h4 class="cafci-subtitle" style="margin: 0;">Ingresos del mes</h4>
       </div>
       <p class="section-meta">Total ingresos del mes: <strong>$ {{ income_total|money_ar }}</strong></p>
+      {% if income_page_obj %}
+      <p class="section-meta">Pagina <strong>{{ income_page_obj.number }}</strong> de <strong>{{ income_page_obj.paginator.num_pages }}</strong> · Registros: <strong>{{ income_page_obj.paginator.count }}</strong></p>
+      {% endif %}
       <div class="table-wrap short">
         <table>
           <thead>
             <tr>
               <th>Fecha</th>
-              <th>Origen</th>
-              <th>Nota</th>
-              <th>Monto</th>
+              <th>Clasificacion</th>
+              <th>Cuenta</th>
+              <th>Descripcion</th>
+              <th>Importe</th>
+              <th>Saldo</th>
+              <th>Aclaraciones</th>
               <th></th>
             </tr>
           </thead>
@@ -493,9 +525,12 @@
             {% for income in income_rows %}
               <tr>
                 <td>{{ income.entry_date|date:'d/m/Y' }}</td>
-                <td>{{ income.source_tag|default:'—' }}</td>
-                <td>{{ income.note|default:'—' }}</td>
+                <td>{{ income.classification|default:'—' }}</td>
+                <td>{{ income.account|default:'—' }}</td>
+                <td>{{ income.description|default:'—' }}</td>
                 <td>$ {{ income.amount|money_ar }}</td>
+                <td>{% if income.balance is not None %}$ {{ income.balance|money_ar }}{% else %}—{% endif %}</td>
+                <td>{{ income.remarks|default:'—' }}</td>
                 <td>
                   {% if perms.dashboard.change_incomeentry %}
                     <a href="{% url 'dashboard:income_edit' income.id %}?scenario_id={{ scenario.id }}">Editar</a>
@@ -503,14 +538,24 @@
                 </td>
               </tr>
             {% empty %}
-              <tr><td colspan="5">Aún no hay ingresos cargados para este mes.</td></tr>
+              <tr><td colspan="8">Aún no hay ingresos cargados para este mes.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
+      {% if income_page_obj and income_page_obj.paginator.num_pages > 1 %}
+      <div class="panel-actions" style="margin-top: 12px;">
+        {% if income_page_obj.has_previous %}
+        <a class="btn-secondary" href="?{% update_query real_tab='incomes' income_page=income_page_obj.previous_page_number %}#expensePanel">Anterior</a>
+        {% endif %}
+        {% if income_page_obj.has_next %}
+        <a class="btn-secondary" href="?{% update_query real_tab='incomes' income_page=income_page_obj.next_page_number %}#expensePanel">Siguiente</a>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
 
-    <div class="real-tab-panel is-active" data-real-panel="tracking">
+    <div class="real-tab-panel {% if active_real_tab == 'tracking' %}is-active{% endif %}" data-real-panel="tracking" {% if active_real_tab != 'tracking' %}hidden{% endif %}>
       <h4 class="cafci-subtitle">Inversiones activas y tasa diaria promedio</h4>
       <p class="section-meta">
         Tasa diaria promedio ponderada: <strong>{{ investment_daily_rate_pct|floatformat:6 }}%</strong>
@@ -897,29 +942,6 @@
   if (typeof initAdelantoMethodToggle === 'function') {
     initAdelantoMethodToggle();
   }
-
-  (function bindRealTabs() {
-    const tabs = Array.from(document.querySelectorAll('[data-real-tab]'));
-    const panels = Array.from(document.querySelectorAll('[data-real-panel]'));
-    if (!tabs.length || !panels.length) return;
-
-    const setActive = (target) => {
-      tabs.forEach((tab) => {
-        const isActive = tab.dataset.realTab === target;
-        tab.classList.toggle('is-active', isActive);
-        tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
-      });
-      panels.forEach((panel) => {
-        const isActive = panel.dataset.realPanel === target;
-        panel.classList.toggle('is-active', isActive);
-        panel.hidden = !isActive;
-      });
-    };
-
-    tabs.forEach((tab) => {
-      tab.addEventListener('click', () => setActive(tab.dataset.realTab));
-    });
-  })();
 
   (function bindCalendarTooltips() {
     const tooltip = document.createElement('div');

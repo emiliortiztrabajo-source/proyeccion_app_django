@@ -30,9 +30,9 @@ class DailyProjectionAdmin(admin.ModelAdmin):
 
 @admin.register(IncomeEntry)
 class IncomeEntryAdmin(admin.ModelAdmin):
-	list_display = ("scenario", "entry_date", "amount", "source_tag")
-	list_filter = ("scenario", "entry_date", "source_tag")
-	search_fields = ("note",)
+	list_display = ("scenario", "entry_date", "amount", "classification", "account", "remarks", "source_tag")
+	list_filter = ("scenario", "entry_date", "remarks", "source_tag")
+	search_fields = ("note", "description", "account", "classification")
 
 
 @admin.register(Expense)

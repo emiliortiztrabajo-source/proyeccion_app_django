@@ -4,6 +4,7 @@ from bisect import bisect_right
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required, user_passes_test
+from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.db.models import Min, Sum
 from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpResponse, HttpResponseRedirect
@@ -21,6 +22,7 @@ from .forms import (
 	ExpenseFilterForm,
 	ExpenseForm,
 	IncomeEntryForm,
+	IncomeFilterForm,
 	IncomeExcelImportForm,
 	InvestmentExcelImportForm,
 	ManualExpenseForm,
@@ -690,6 +692,7 @@ def dashboard_home(request):
 		request.GET or None,
 		provider_queryset=Provider.objects.filter(id__in=provider_qs),
 	)
+	income_filter_form = IncomeFilterForm(request.GET or None)
 
 	selected_month = dashboard_start_month
 	raw_month = request.GET.get("month")
@@ -706,6 +709,11 @@ def dashboard_home(request):
 	period_form.fields["month"].initial = selected_month
 	selected_provider = None
 	selected_payment_date = None
+	selected_income_date = None
+	selected_income_classification = ""
+	selected_income_account = ""
+	selected_income_remarks = ""
+	selected_income_description_query = ""
 
 	if period_form.is_valid():
 		selected_form_scenario_id = int(period_form.cleaned_data["scenario_id"])
@@ -737,7 +745,34 @@ def dashboard_home(request):
 		selected_provider = expense_filter_form.cleaned_data.get("provider")
 		selected_payment_date = expense_filter_form.cleaned_data.get("payment_date")
 
+	income_base_qs = IncomeEntry.objects.filter(
+		scenario=scenario,
+		entry_date__year=selected_year,
+		entry_date__month=selected_month,
+	)
+	income_filter_form = IncomeFilterForm(
+		request.GET or None,
+		classification_choices=list(
+			income_base_qs.exclude(classification="").values_list("classification", flat=True).distinct().order_by("classification")
+		),
+		account_choices=list(
+			income_base_qs.exclude(account="").values_list("account", flat=True).distinct().order_by("account")
+		),
+		remarks_choices=list(
+			income_base_qs.exclude(remarks="").values_list("remarks", flat=True).distinct().order_by("remarks")
+		),
+	)
+	if income_filter_form.is_valid():
+		selected_income_date = income_filter_form.cleaned_data.get("entry_date")
+		selected_income_classification = income_filter_form.cleaned_data.get("classification") or ""
+		selected_income_account = income_filter_form.cleaned_data.get("account") or ""
+		selected_income_remarks = income_filter_form.cleaned_data.get("remarks") or ""
+		selected_income_description_query = (income_filter_form.cleaned_data.get("description_query") or "").strip()
+
 	requested_sort = request.GET.get("sort")
+	active_real_tab = request.GET.get("real_tab") or "expenses"
+	if active_real_tab not in {"expenses", "incomes", "tracking"}:
+		active_real_tab = "expenses"
 	requested_dir = request.GET.get("dir", "asc")
 	allowed_sorts = {
 		"payment_date",
@@ -756,6 +791,8 @@ def dashboard_home(request):
 		return "asc"
 
 	is_real_scenario = _is_real_scenario(scenario)
+	if is_real_scenario and not request.GET.get("real_tab"):
+		active_real_tab = "incomes"
 	cash_rows = build_year_cash_projection(scenario=scenario, year=selected_year, start_month=dashboard_start_month)
 	month_rows = [row for row in cash_rows if row["mes"] == selected_month]
 	real_snapshot = build_real_projection_snapshot(scenario=scenario, year=selected_year, month=selected_month)
@@ -931,8 +968,27 @@ def dashboard_home(request):
 		scenario=scenario,
 		entry_date__year=selected_year,
 		entry_date__month=selected_month,
-	).order_by("entry_date")
+	)
+	if selected_income_date:
+		monthly_incomes = monthly_incomes.filter(entry_date=selected_income_date)
+	if selected_income_classification:
+		monthly_incomes = monthly_incomes.filter(classification=selected_income_classification)
+	if selected_income_account:
+		monthly_incomes = monthly_incomes.filter(account=selected_income_account)
+	if selected_income_remarks:
+		monthly_incomes = monthly_incomes.filter(remarks=selected_income_remarks)
+	if selected_income_description_query:
+		monthly_incomes = monthly_incomes.filter(description__icontains=selected_income_description_query)
+	monthly_incomes = monthly_incomes.order_by("entry_date", "id")
 	income_total = monthly_incomes.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+	income_paginator = Paginator(monthly_incomes, 100)
+	income_page_number = request.GET.get("income_page") or "1"
+	try:
+		income_page_obj = income_paginator.page(income_page_number)
+	except PageNotAnInteger:
+		income_page_obj = income_paginator.page(1)
+	except EmptyPage:
+		income_page_obj = income_paginator.page(income_paginator.num_pages if income_paginator.num_pages else 1)
 
 	# Calculator options come from the selected month only, independent from table filters.
 	calc_expenses_qs = (
@@ -1002,6 +1058,8 @@ def dashboard_home(request):
 		"show_cafci_panel": scenario.interest_mode == Scenario.INTEREST_MODE_WEEKLY_AVG,
 		"period_form": period_form,
 		"expense_filter_form": expense_filter_form,
+		"income_filter_form": income_filter_form,
+		"active_real_tab": active_real_tab,
 		"month_name": MONTH_NAME_ES[selected_month],
 		"selected_year": selected_year,
 		"selected_month": selected_month,
@@ -1013,7 +1071,8 @@ def dashboard_home(request):
 		"expense_rows": expense_qs[:250],
 		"expense_total": expense_total,
 		"expense_change_logs": expense_change_logs,
-		"income_rows": monthly_incomes[:250],
+		"income_rows": income_page_obj.object_list,
+		"income_page_obj": income_page_obj,
 		"income_total": income_total,
 		"total_mes": _sum_interest(month_rows),
 		"total_hasta_hoy": _sum_interest([row for row in cash_rows if row["fecha"] <= today]),
@@ -1343,6 +1402,7 @@ def income_import_excel(request):
 						request,
 						f"Importación de ingresos finalizada. Nuevos: {result.created} · Actualizados: {result.updated} · Errores: {len(result.errors)}",
 					)
+					return redirect(f"{reverse('dashboard:home')}?scenario_id={scenario.id}&year={scenario.year}&month={scenario.start_month}&real_tab=incomes#expensePanel")
 				elif result.errors:
 					messages.error(request, "No se importaron filas válidas de ingresos. Revisá los errores listados.")
 	else:

@@ -324,7 +324,7 @@ function initExpensePanelToggle() {
 
   const storageKey = 'expensePanelExpanded';
   const params = new URLSearchParams(window.location.search);
-  const hasExpenseQuery = ['provider', 'payment_date', 'sort', 'dir'].some((key) => {
+  const hasExpenseQuery = ['provider', 'payment_date', 'sort', 'dir', 'entry_date', 'classification', 'account', 'remarks', 'description_query', 'real_tab'].some((key) => {
     const value = params.get(key);
     return value !== null && value !== '';
   });
@@ -352,7 +352,7 @@ function initExpensePanelToggle() {
   } else if (savedExpanded === '1' || savedExpanded === '0') {
     setExpanded(savedExpanded === '1');
   } else {
-    setExpanded(false);
+    setExpanded(window.location.hash === '#expensePanel');
   }
 
   toggleButton.addEventListener('click', () => {
