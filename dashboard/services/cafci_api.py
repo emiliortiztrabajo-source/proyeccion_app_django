@@ -6,6 +6,7 @@ import os
 import ssl
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -67,9 +68,12 @@ def _normalize_decimal(value: Any) -> Decimal | None:
         else:
             value = value.replace(",", "")
     try:
-        return Decimal(str(value))
+        parsed = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError):
         return None
+    if not parsed.is_finite():
+        return None
+    return parsed
 
 
 def _as_text(value: Any) -> str:
@@ -155,8 +159,11 @@ def _normalize_cuotaparte_units(value: Decimal | None) -> Decimal | None:
         return None
     # CAFCI Planilla Diaria often publishes value as "mil cuotapartes".
     # Keep calculator history in regular cuotaparte units.
-    if value >= Decimal("1000"):
-        return value / Decimal("1000")
+    try:
+        if value >= Decimal("1000"):
+            return value / Decimal("1000")
+    except InvalidOperation:
+        return None
     return value
 
 
@@ -314,6 +321,92 @@ def _find_planilla_header_row(raw_df: pd.DataFrame) -> int | None:
     return None
 
 
+def _build_planilla_candidate_records(binary: bytes, *, source: str) -> tuple[dict[str, Any], ...]:
+    raw_df = pd.read_excel(io.BytesIO(binary), sheet_name=0, header=None)
+
+    data_df = raw_df.iloc[9:].copy()
+    if data_df.empty:
+        return ()
+    data_df = data_df.reset_index(drop=True)
+
+    col_fondo = 0
+    col_fecha = 4
+    col_cuotaparte_actual = 5
+    col_cuotaparte_anterior = 6
+    col_variacion_pct = 7
+    col_codigo_cafci = 20
+
+    candidates = data_df[data_df[col_codigo_cafci].notna()].copy()
+    if candidates.empty:
+        return ()
+
+    records: list[dict[str, Any]] = []
+    for _, row in candidates.iterrows():
+        actual = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_actual)))
+        previous = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_anterior)))
+        computed_daily_return = None
+        if actual is not None and previous not in (None, Decimal("0")):
+            computed_daily_return = ((actual - previous) / previous) * Decimal("100")
+        fund_name = _as_text(row.get(col_fondo))
+        codigo_cafci = _as_text(row.get(col_codigo_cafci)).strip()
+        records.append(
+            {
+                "fundName": fund_name,
+                "fundNameNorm": _normalize_label_text(fund_name),
+                "dailyDate": _normalize_date(row.get(col_fecha)),
+                "cuotaparte": actual,
+                "cuotapartePrevious": previous,
+                "dailyReturn": computed_daily_return if computed_daily_return is not None else _normalize_decimal(row.get(col_variacion_pct)),
+                "dailyReturnSource": "formula" if computed_daily_return is not None else "variac_pct",
+                "codigoCafci": codigo_cafci,
+                "source": source,
+            }
+        )
+
+    return tuple(records)
+
+
+def _match_planilla_candidate_record(
+    records: tuple[dict[str, Any], ...],
+    *,
+    fund: str,
+    fund_class: str,
+    fund_name: str | None = None,
+) -> dict[str, Any] | None:
+    target_codes = [str(fund).strip(), str(fund_class).strip()]
+    target_codes = [code for code in target_codes if code]
+
+    for code in target_codes:
+        matched = next((record for record in records if record.get("codigoCafci") == code), None)
+        if matched is not None:
+            return dict(matched)
+
+    if fund_name:
+        normalized_target = _normalize_label_text(fund_name)
+        if normalized_target:
+            matched = next(
+                (
+                    record
+                    for record in records
+                    if normalized_target in (record.get("fundNameNorm") or "")
+                    or (record.get("fundNameNorm") or "") in normalized_target
+                ),
+                None,
+            )
+            if matched is not None:
+                return dict(matched)
+
+    return None
+
+
+@lru_cache(maxsize=4)
+def _load_local_planilla_candidate_records(local_path: str, modified_time: float) -> tuple[dict[str, Any], ...]:
+    del modified_time  # part of cache key so the cache expires when the file changes
+    with open(local_path, "rb") as fh:
+        binary = fh.read()
+    return _build_planilla_candidate_records(binary, source="local")
+
+
 def _extract_planilla_daily_row(*, fund: str, fund_class: str, fund_name: str | None = None) -> dict[str, Any] | None:
     # Prefer a locally cached planilla when available to avoid network issues.
     local_path = _resolve_local_planilla_path()
@@ -324,82 +417,8 @@ def _extract_planilla_daily_row(*, fund: str, fund_class: str, fund_name: str | 
         # by default download remote; callers that must avoid network should
         # call `build_cafci_snapshot(..., local_only=True)` which prevents remote calls.
         binary = _get_bytes(CAFCI_PB_GET_URL)
-    raw_df = pd.read_excel(io.BytesIO(binary), sheet_name=0, header=None)
-
-    # The daily CAFCI sheet consistently starts data rows at index 9.
-    # Avoid dynamic header detection because CAFCI changes heading text and layout frequently.
-    data_df = raw_df.iloc[9:].copy()
-    if data_df.empty:
-        return None
-
-    data_df = data_df.reset_index(drop=True)
-
-    # Column positions validated against current CAFCI Planilla Diaria format.
-    col_fondo = 0
-    col_fecha = 4
-    col_cuotaparte_actual = 5
-    col_cuotaparte_anterior = 6
-    col_variacion_pct = 7
-    col_codigo_cafci = 20
-
-    target_codes = [str(fund).strip(), str(fund_class).strip()]
-    target_codes = [c for c in target_codes if c]
-
-    candidates = data_df[data_df[col_codigo_cafci].notna()].copy()
-    if candidates.empty:
-        return None
-
-    candidates["__codigo_cafci_str"] = candidates[col_codigo_cafci].astype(str).str.strip()
-
-    for code in target_codes:
-        matched = candidates[candidates["__codigo_cafci_str"] == code]
-        if matched.empty:
-            continue
-
-        row = matched.iloc[0]
-        actual = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_actual)))
-        previous = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_anterior)))
-        computed_daily_return = None
-        if actual is not None and previous not in (None, Decimal("0")):
-            computed_daily_return = ((actual - previous) / previous) * Decimal("100")
-        return {
-            "fundName": _as_text(row.get(col_fondo)),
-            "dailyDate": _normalize_date(row.get(col_fecha)),
-            "cuotaparte": actual,
-            "cuotapartePrevious": previous,
-            "dailyReturn": computed_daily_return if computed_daily_return is not None else _normalize_decimal(row.get(col_variacion_pct)),
-            "dailyReturnSource": "formula" if computed_daily_return is not None else "variac_pct",
-            "codigoCafci": code,
-            "source": CAFCI_PB_GET_URL,
-        }
-
-    if fund_name:
-        normalized_target = _normalize_label_text(fund_name)
-        if normalized_target:
-            candidates["__fondo_norm"] = candidates[col_fondo].apply(_normalize_label_text)
-            by_name = candidates[candidates["__fondo_norm"].str.contains(normalized_target, na=False)]
-            if by_name.empty:
-                by_name = candidates[candidates["__fondo_norm"].apply(lambda x: normalized_target in x or x in normalized_target)]
-
-            if not by_name.empty:
-                row = by_name.iloc[0]
-                actual = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_actual)))
-                previous = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_anterior)))
-                computed_daily_return = None
-                if actual is not None and previous not in (None, Decimal("0")):
-                    computed_daily_return = ((actual - previous) / previous) * Decimal("100")
-                return {
-                    "fundName": _as_text(row.get(col_fondo)),
-                    "dailyDate": _normalize_date(row.get(col_fecha)),
-                    "cuotaparte": actual,
-                    "cuotapartePrevious": previous,
-                    "dailyReturn": computed_daily_return if computed_daily_return is not None else _normalize_decimal(row.get(col_variacion_pct)),
-                    "dailyReturnSource": "formula" if computed_daily_return is not None else "variac_pct",
-                    "codigoCafci": _as_text(row.get(col_codigo_cafci)),
-                    "source": CAFCI_PB_GET_URL,
-                }
-
-    return None
+    records = _build_planilla_candidate_records(binary, source=CAFCI_PB_GET_URL)
+    return _match_planilla_candidate_record(records, fund=fund, fund_class=fund_class, fund_name=fund_name)
 
 
 def _extract_planilla_daily_row_local(*, fund: str, fund_class: str, fund_name: str | None = None) -> dict[str, Any] | None:
@@ -408,86 +427,15 @@ def _extract_planilla_daily_row_local(*, fund: str, fund_class: str, fund_name: 
     if not local_path or not os.path.exists(local_path):
         return None
     try:
-        with open(local_path, "rb") as fh:
-            binary = fh.read()
+        modified_time = os.path.getmtime(local_path)
     except Exception:
         return None
 
     try:
-        raw_df = pd.read_excel(io.BytesIO(binary), sheet_name=0, header=None)
+        records = _load_local_planilla_candidate_records(local_path, modified_time)
     except Exception:
         return None
-
-    data_df = raw_df.iloc[9:].copy()
-    if data_df.empty:
-        return None
-    data_df = data_df.reset_index(drop=True)
-
-    col_fondo = 0
-    col_fecha = 4
-    col_cuotaparte_actual = 5
-    col_cuotaparte_anterior = 6
-    col_variacion_pct = 7
-    col_codigo_cafci = 20
-
-    target_codes = [str(fund).strip(), str(fund_class).strip()]
-    target_codes = [c for c in target_codes if c]
-
-    candidates = data_df[data_df[col_codigo_cafci].notna()].copy()
-    if candidates.empty:
-        return None
-
-    candidates["__codigo_cafci_str"] = candidates[col_codigo_cafci].astype(str).str.strip()
-
-    for code in target_codes:
-        matched = candidates[candidates["__codigo_cafci_str"] == code]
-        if matched.empty:
-            continue
-
-        row = matched.iloc[0]
-        actual = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_actual)))
-        previous = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_anterior)))
-        computed_daily_return = None
-        if actual is not None and previous not in (None, Decimal("0")):
-            computed_daily_return = ((actual - previous) / previous) * Decimal("100")
-        return {
-            "fundName": _as_text(row.get(col_fondo)),
-            "dailyDate": _normalize_date(row.get(col_fecha)),
-            "cuotaparte": actual,
-            "cuotapartePrevious": previous,
-            "dailyReturn": computed_daily_return if computed_daily_return is not None else _normalize_decimal(row.get(col_variacion_pct)),
-            "dailyReturnSource": "formula" if computed_daily_return is not None else "variac_pct",
-            "codigoCafci": code,
-            "source": "local",
-        }
-
-    if fund_name:
-        normalized_target = _normalize_label_text(fund_name)
-        if normalized_target:
-            candidates["__fondo_norm"] = candidates[col_fondo].apply(_normalize_label_text)
-            by_name = candidates[candidates["__fondo_norm"].str.contains(normalized_target, na=False)]
-            if by_name.empty:
-                by_name = candidates[candidates["__fondo_norm"].apply(lambda x: normalized_target in x or x in normalized_target)]
-
-            if not by_name.empty:
-                row = by_name.iloc[0]
-                actual = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_actual)))
-                previous = _normalize_cuotaparte_units(_normalize_decimal(row.get(col_cuotaparte_anterior)))
-                computed_daily_return = None
-                if actual is not None and previous not in (None, Decimal("0")):
-                    computed_daily_return = ((actual - previous) / previous) * Decimal("100")
-                return {
-                    "fundName": _as_text(row.get(col_fondo)),
-                    "dailyDate": _normalize_date(row.get(col_fecha)),
-                    "cuotaparte": actual,
-                    "cuotapartePrevious": previous,
-                    "dailyReturn": computed_daily_return if computed_daily_return is not None else _normalize_decimal(row.get(col_variacion_pct)),
-                    "dailyReturnSource": "formula" if computed_daily_return is not None else "variac_pct",
-                    "codigoCafci": _as_text(row.get(col_codigo_cafci)),
-                    "source": "local",
-                }
-
-    return None
+    return _match_planilla_candidate_record(records, fund=fund, fund_class=fund_class, fund_name=fund_name)
 
 
 def get_fund_class_ficha(fund: str, fund_class: str) -> dict[str, Any]:
