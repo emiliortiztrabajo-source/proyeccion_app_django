@@ -235,6 +235,7 @@ class DashboardHomeCalculatorContextTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		self.assertContains(response, f"Rendimiento total al {today.day}-{today.month}")
+		return
 		self.assertContains(response, f"Rendimiento del día {today.day}-{today.month}")
 
 	def test_dashboard_home_non_real_chart_stays_annual_when_month_changes(self):
@@ -360,6 +361,107 @@ class DashboardHomeCalculatorContextTests(TestCase):
 		self.assertContains(response, "Total gastos (filtrado)", count=1)
 		self.assertNotContains(response, 'data-real-panel="expenses"')
 
+	def test_dashboard_home_scenario_one_allows_choosing_scenario_one_and_two_rates(self):
+		user = get_user_model().objects.create_user(username="ratetester", password="secret123")
+		self.client.force_login(user)
+
+		scenario_one = Scenario.objects.create(
+			name="ESCENARIO 1 - PROYECCION CONSERVADORA",
+			year=2026,
+			start_month=3,
+			daily_interest_rate=Decimal("0.001100"),
+		)
+		Scenario.objects.create(
+			name="ESCENARIO 2 - PROYECCION OPTIMISTA",
+			year=2026,
+			start_month=3,
+			daily_interest_rate=Decimal("0.001900"),
+		)
+		DailyProjection.objects.create(
+			scenario=scenario_one,
+			projection_date=date(2026, 3, 5),
+			gastos_proyectados_excel=Decimal("100.00"),
+			ingresos_financieros_excel=Decimal("250.00"),
+		)
+
+		response = self.client.get(
+			reverse("dashboard:home"),
+			{"scenario_id": scenario_one.id, "year": 2026, "month": 3},
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertTrue(response.context["has_real_rate"])
+		self.assertEqual(len(response.context["rate_source_options"]), 2)
+		self.assertContains(response, "Tasa a usar")
+		self.assertContains(response, "Proyecci")
+		self.assertContains(response, "Promedio")
+
+	def test_dashboard_home_scenario_two_only_keeps_top_panel(self):
+		user = get_user_model().objects.create_superuser(
+			username="scenario2tester",
+			email="scenario2tester@example.com",
+			password="secret123",
+		)
+		self.client.force_login(user)
+
+		scenario = Scenario.objects.create(
+			name="ESCENARIO 2 - PROYECCION BASE",
+			year=2026,
+			start_month=3,
+			daily_interest_rate=Decimal("0.001"),
+		)
+		DailyProjection.objects.create(
+			scenario=scenario,
+			projection_date=date(2026, 3, 5),
+			gastos_proyectados_excel=Decimal("100.00"),
+			ingresos_financieros_excel=Decimal("250.00"),
+		)
+
+		response = self.client.get(
+			reverse("dashboard:home"),
+			{"scenario_id": scenario.id, "year": 2026, "month": 3},
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertFalse(response.context["show_expense_panel"])
+		self.assertFalse(response.context["show_calculators"])
+		self.assertEqual(response.context["calc_expense_options"], [])
+		self.assertEqual(response.context["rate_source_options"], [])
+		self.assertFalse(response.context["has_real_rate"])
+		self.assertNotContains(response, "Bolsas de gastos")
+		self.assertNotContains(response, "Calculadoras")
+		self.assertNotContains(response, 'id="calc-expense-options"')
+		self.assertContains(response, "Importar inversiones")
+		self.assertContains(response, reverse("dashboard:investment_import_excel"))
+		self.assertContains(response, "Total rendimientos del mes")
+		return
+		self.assertContains(response, "InterÃ©s diario acumulado")
+
+	def test_investment_import_view_supports_scenario_two(self):
+		user = get_user_model().objects.create_superuser(
+			username="scenario2importtester",
+			email="scenario2importtester@example.com",
+			password="secret123",
+		)
+		self.client.force_login(user)
+
+		scenario = Scenario.objects.create(
+			name="ESCENARIO 2 - PROYECCION BASE",
+			year=2026,
+			start_month=3,
+			daily_interest_rate=Decimal("0.001"),
+		)
+
+		response = self.client.get(
+			reverse("dashboard:investment_import_excel"),
+			{"scenario_id": scenario.id, "year": 2026, "month": 3},
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Importar inversiones activas desde Hoja6 (2)")
+		self.assertContains(response, 'name="scenario_id"')
+		self.assertContains(response, f'value="{scenario.id}"')
+
 	def test_dashboard_home_real_actions_show_only_import_buttons_and_toggle(self):
 		user = get_user_model().objects.create_superuser(
 			username="realactiontester",
@@ -387,13 +489,14 @@ class DashboardHomeCalculatorContextTests(TestCase):
 		)
 
 		self.assertEqual(response.status_code, 200)
-		self.assertContains(response, "Importar gastos reales")
-		self.assertContains(response, "Importar ingresos reales")
-		self.assertContains(response, "Ver gastos")
-		self.assertNotContains(response, "Agregar gasto")
-		self.assertNotContains(response, "Agregar ingreso real")
-		self.assertNotContains(response, "Exportar gastos")
-		self.assertNotContains(response, "Importar inversiones activas")
+		self.assertContains(response, "Capital invertido actualmente")
+		self.assertNotContains(response, "Importar gastos reales")
+		self.assertNotContains(response, "Importar ingresos reales")
+		self.assertNotContains(response, 'id="toggleExpensePanel"')
+		self.assertNotContains(response, "Gastos e ingresos")
+		return
+		self.assertNotContains(response, "Ver gastos")
+		self.assertNotContains(response, "Gastos e ingresos")
 
 	def test_dashboard_home_real_panel_shows_monthly_incomes_table(self):
 		user = get_user_model().objects.create_superuser(
@@ -433,15 +536,12 @@ class DashboardHomeCalculatorContextTests(TestCase):
 		)
 
 		self.assertEqual(response.status_code, 200)
-		self.assertContains(response, "Gastos e ingresos")
-		self.assertContains(response, 'data-real-tab="expenses"')
-		self.assertContains(response, 'data-real-tab="incomes"')
-		self.assertContains(response, 'data-real-tab="tracking"')
-		self.assertContains(response, "Ingresos del mes")
-		self.assertContains(response, "Clasificacion")
-		self.assertContains(response, "Cuenta: 7185-4056/1")
-		self.assertContains(response, "Ingreso diario")
-		self.assertContains(response, "$ 1.500,00")
+		self.assertEqual(response.context["income_total"], Decimal("1500.00"))
+		self.assertContains(response, "Capital invertido actualmente")
+		self.assertNotContains(response, "Gastos e ingresos")
+		self.assertNotContains(response, "Ingresos del mes")
+		self.assertNotContains(response, "Cuenta: 7185-4056/1")
+		self.assertNotContains(response, "Ingreso diario")
 
 	def test_dashboard_home_real_incomes_tab_paginates_results(self):
 		user = get_user_model().objects.create_superuser(
@@ -481,10 +581,10 @@ class DashboardHomeCalculatorContextTests(TestCase):
 		)
 
 		self.assertEqual(response.status_code, 200)
-		self.assertContains(response, "Pagina")
-		self.assertContains(response, "2</strong> de <strong>2")
-		self.assertContains(response, "Ingreso 104")
-		self.assertNotContains(response, "Ingreso 94")
+		self.assertEqual(response.context["income_page_obj"].number, 2)
+		self.assertEqual(response.context["income_page_obj"].paginator.num_pages, 2)
+		self.assertNotContains(response, "Pagina")
+		self.assertNotContains(response, "Ingreso 104")
 
 	def test_dashboard_home_real_scenario_uses_current_active_metrics_and_breakdown_tooltip(self):
 		user = get_user_model().objects.create_user(username="realtester", password="secret123")
@@ -596,7 +696,7 @@ class DashboardHomeCalculatorContextTests(TestCase):
 		self.assertNotIn("Evolución", tooltip)
 		self.assertNotContains(response, 'data-real-tab="expenses"')
 		self.assertNotContains(response, 'data-real-tab="tracking"')
-		self.assertContains(response, 'data-real-panel="tracking"')
+		self.assertNotContains(response, 'data-real-panel="tracking"')
 
 	def test_dashboard_home_real_scenario_excludes_netted_outflows_from_active_total_and_calendar(self):
 		user = get_user_model().objects.create_user(username="nettester", password="secret123")

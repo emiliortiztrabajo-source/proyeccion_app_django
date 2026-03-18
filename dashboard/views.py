@@ -170,6 +170,124 @@ def _rate_decimal_to_plain_string(value):
 	return text or "0"
 
 
+def _load_cuotaparte_history():
+	cuotaparte_qs = FundCuotaparteHistory.objects.filter(fund_name=CAFCI_CALCULATOR_FUND_NAME).order_by("quote_date")
+	cuotaparte_history = {row.quote_date: row.cuotaparte for row in cuotaparte_qs}
+	return cuotaparte_history, sorted(cuotaparte_history.keys())
+
+
+def _find_cuotaparte_before_or_on(target, cuotaparte_history, cuotaparte_dates):
+	if not cuotaparte_dates:
+		return None
+	idx = bisect_right(cuotaparte_dates, target)
+	if idx == 0:
+		return None
+	return cuotaparte_history[cuotaparte_dates[idx - 1]]
+
+
+def _build_active_investment_lots(snapshots):
+	open_lots = []
+
+	def _consume_lots(remaining, *, preferred_label=None):
+		for same_label_only in (True, False):
+			if remaining <= 0:
+				break
+			for lot in open_lots:
+				if remaining <= 0:
+					break
+				if lot["amount"] <= 0:
+					continue
+				if preferred_label:
+					if same_label_only and lot["label"] != preferred_label:
+						continue
+					if not same_label_only and lot["label"] == preferred_label:
+						continue
+				consume_amount = min(lot["amount"], remaining)
+				lot["amount"] -= consume_amount
+				remaining -= consume_amount
+		return remaining
+
+	for snap in snapshots:
+		for flow in snap.flows.all():
+			amount = flow.amount or Decimal("0")
+			if amount > 0:
+				open_lots.append(
+					{
+						"snapshot_date": snap.snapshot_date,
+						"label": flow.label,
+						"amount": amount,
+					}
+				)
+			elif amount < 0:
+				_consume_lots(-amount, preferred_label=flow.label)
+
+	return [lot for lot in open_lots if lot["amount"] > 0]
+
+
+def _compute_active_investment_rate_decimal(*, scenario, cuotaparte_history=None, cuotaparte_dates=None):
+	if scenario is None:
+		return None
+
+	if cuotaparte_history is None or cuotaparte_dates is None:
+		cuotaparte_history, cuotaparte_dates = _load_cuotaparte_history()
+
+	latest_quote_date = cuotaparte_dates[-1] if cuotaparte_dates else None
+	latest_cuotaparte = cuotaparte_history.get(latest_quote_date) if latest_quote_date else None
+	if latest_quote_date is None or latest_cuotaparte is None:
+		return None
+
+	snapshots = list(
+		InvestmentDailySnapshot.objects.filter(
+			scenario=scenario,
+			snapshot_date__lte=date.today(),
+		)
+		.prefetch_related("flows")
+		.order_by("snapshot_date")
+	)
+	if not snapshots:
+		return None
+
+	last_cut_date = None
+	for snapshot in snapshots:
+		if snapshot.was_cut:
+			last_cut_date = snapshot.snapshot_date
+	active_snapshots = [
+		snapshot for snapshot in snapshots if last_cut_date is None or snapshot.snapshot_date > last_cut_date
+	]
+	active_investment_lots = _build_active_investment_lots(active_snapshots)
+	if not active_investment_lots:
+		return None
+
+	weighted_daily_rate_sum = Decimal("0")
+	weighted_amount_total = Decimal("0")
+	for lot in active_investment_lots:
+		cuota_origen = _find_cuotaparte_before_or_on(lot["snapshot_date"], cuotaparte_history, cuotaparte_dates)
+		if cuota_origen in (None, 0):
+			continue
+		rendimiento = (latest_cuotaparte / cuota_origen) - Decimal("1")
+		days_elapsed = max((latest_quote_date - lot["snapshot_date"]).days, 1)
+		daily_rate_decimal = rendimiento / Decimal(days_elapsed)
+		weighted_daily_rate_sum += lot["amount"] * daily_rate_decimal
+		weighted_amount_total += lot["amount"]
+
+	if weighted_amount_total <= 0:
+		return None
+	return weighted_daily_rate_sum / weighted_amount_total
+
+
+def _build_rate_choice_option(label, rate_decimal, *, value=None, is_default=False):
+	safe_rate_decimal = _sanitize_rate_decimal(rate_decimal) or Decimal("0")
+	rate_pct = safe_rate_decimal * Decimal("100")
+	return {
+		"label": label,
+		"value": value or label,
+		"rate_decimal": _rate_decimal_to_plain_string(safe_rate_decimal),
+		"rate_pct_input": f"{rate_pct:.4f}",
+		"rate_pct_display": f"{rate_pct:.6f}",
+		"is_default": is_default,
+	}
+
+
 def _compute_cuotaparte_average_daily_rate(history_points):
 	def _normalize_quote_value(raw_value):
 		try:
@@ -629,6 +747,54 @@ def _is_real_scenario(scenario):
 	return "real" in _normalize_text(scenario.name)
 
 
+def _is_scenario_one(scenario):
+	if scenario is None:
+		return False
+	return _normalize_text(scenario.name).startswith("escenario 1")
+
+
+def _is_scenario_two(scenario):
+	if scenario is None:
+		return False
+	return _normalize_text(scenario.name).startswith("escenario 2")
+
+
+def _display_scenario_name(scenario):
+	"""User-facing label for a scenario.
+
+	This keeps the UI name stable even if the database scenario name changes.
+
+	- Escenario 1 -> "Proyección conservadora <year>"
+	- Escenario 3 / real -> "Inversiones reales"
+	- Otherwise, fallback to the raw name.
+	"""
+	if scenario is None:
+		return ""
+	name_norm = _normalize_text(scenario.name)
+	if "escenario 1" in name_norm:
+		return f"Proyección conservadora {scenario.year}"
+	if "real" in name_norm or "escenario 3" in name_norm:
+		return "Inversiones reales"
+	return scenario.name
+
+
+def _get_dashboard_rate_comparison_scenario(*, current_scenario, available_scenarios):
+	if current_scenario is None:
+		return None
+
+	if _is_scenario_one(current_scenario):
+		same_year_scenarios = Scenario.objects.filter(year=current_scenario.year).order_by("name")
+		scenario_two = next((scenario for scenario in same_year_scenarios if _is_scenario_two(scenario)), None)
+		if scenario_two is not None and scenario_two.id != current_scenario.id:
+			return scenario_two
+
+	if not available_scenarios:
+		return None
+
+	candidate_scenarios = [scenario for scenario in available_scenarios if scenario.id != current_scenario.id]
+	return candidate_scenarios[0] if candidate_scenarios else None
+
+
 def _build_home_url(*, scenario, year=None, month=None, provider=None, payment_date=None, anchor=None):
 	params = {"scenario_id": scenario.id}
 	if year is not None:
@@ -685,7 +851,7 @@ def dashboard_home(request):
 		request.GET or None,
 		year=selected_year,
 		start_month=dashboard_start_month,
-		scenario_choices=[(s.id, f"{s.name} ({s.year})") for s in available_scenarios],
+		scenario_choices=[(s.id, _display_scenario_name(s)) for s in available_scenarios],
 		selected_scenario_id=scenario.id,
 	)
 	expense_filter_form = ExpenseFilterForm(
@@ -791,6 +957,10 @@ def dashboard_home(request):
 		return "asc"
 
 	is_real_scenario = _is_real_scenario(scenario)
+	is_projection_scenario_two = _is_scenario_two(scenario)
+	show_expense_panel = not is_real_scenario and not is_projection_scenario_two
+	show_calculators = not is_projection_scenario_two
+	prepare_calculators = show_calculators
 	if is_real_scenario and not request.GET.get("real_tab"):
 		active_real_tab = "incomes"
 	cash_rows = build_year_cash_projection(scenario=scenario, year=selected_year, start_month=dashboard_start_month)
@@ -823,63 +993,14 @@ def dashboard_home(request):
 		investment_rows_current = []
 
 	# Preload cuotaparte history so we can compute how each investment evolved until today.
-	fund_name = CAFCI_CALCULATOR_FUND_NAME
-	cuotaparte_qs = FundCuotaparteHistory.objects.filter(fund_name=fund_name).order_by("quote_date")
-	cuotaparte_history = {r.quote_date: r.cuotaparte for r in cuotaparte_qs}
-	cuotaparte_dates = sorted(cuotaparte_history.keys())
-
-	latest_cuotaparte = cuotaparte_history.get(cuotaparte_dates[-1]) if cuotaparte_dates else None
+	cuotaparte_history, cuotaparte_dates = _load_cuotaparte_history()
+	latest_quote_date = cuotaparte_dates[-1] if cuotaparte_dates else None
+	latest_cuotaparte = cuotaparte_history.get(latest_quote_date) if latest_quote_date else None
 
 	def _format_currency(value: Decimal | None) -> str:
 		if value is None:
 			return "—"
 		return f"$ {value:,.2f}"
-
-	def _find_cuotaparte_before_or_on(target: date) -> Decimal | None:
-		if not cuotaparte_dates:
-			return None
-		idx = bisect_right(cuotaparte_dates, target)
-		if idx == 0:
-			return None
-		return cuotaparte_history[cuotaparte_dates[idx - 1]]
-
-	def _build_active_investment_lots(snapshots):
-		open_lots = []
-
-		def _consume_lots(remaining, *, preferred_label=None):
-			for same_label_only in (True, False):
-				if remaining <= 0:
-					break
-				for lot in open_lots:
-					if remaining <= 0:
-						break
-					if lot["amount"] <= 0:
-						continue
-					if preferred_label:
-						if same_label_only and lot["label"] != preferred_label:
-							continue
-						if not same_label_only and lot["label"] == preferred_label:
-							continue
-					consume_amount = min(lot["amount"], remaining)
-					lot["amount"] -= consume_amount
-					remaining -= consume_amount
-			return remaining
-
-		for snap in snapshots:
-			for flow in snap.flows.all():
-				amount = flow.amount or Decimal("0")
-				if amount > 0:
-					open_lots.append(
-						{
-							"snapshot_date": snap.snapshot_date,
-							"label": flow.label,
-							"amount": amount,
-						}
-					)
-				elif amount < 0:
-					_consume_lots(-amount, preferred_label=flow.label)
-
-		return [lot for lot in open_lots if lot["amount"] > 0]
 
 	last_cut_date = None
 	for row in investment_rows_current:
@@ -990,28 +1111,30 @@ def dashboard_home(request):
 	except EmptyPage:
 		income_page_obj = income_paginator.page(income_paginator.num_pages if income_paginator.num_pages else 1)
 
-	# Calculator options come from the selected month only, independent from table filters.
-	calc_expenses_qs = (
-		Expense.objects.filter(
-			scenario=scenario,
-			year=selected_year,
-			month=selected_month,
+	calc_expense_options = []
+	if prepare_calculators:
+		# Calculator options come from the selected month only, independent from table filters.
+		calc_expenses_qs = (
+			Expense.objects.filter(
+				scenario=scenario,
+				year=selected_year,
+				month=selected_month,
+			)
+			.select_related("provider")
+			.exclude(payment_date__isnull=True)
+			.exclude(amount=0)
+			.order_by("provider__name", "payment_date", "payment_label", "id")
 		)
-		.select_related("provider")
-		.exclude(payment_date__isnull=True)
-		.exclude(amount=0)
-		.order_by("provider__name", "payment_date", "payment_label", "id")
-	)
-	calc_expense_options = [
-		{
-			"id": exp.id,
-			"provider": exp.provider.name.strip() if exp.provider and exp.provider.name else "",
-			"payment_date": exp.payment_date,
-			"payment_label": (exp.payment_label or "").strip(),
-			"amount": float(exp.amount or 0),
-		}
-		for exp in calc_expenses_qs[:1000]
-	]
+		calc_expense_options = [
+			{
+				"id": exp.id,
+				"provider": exp.provider.name.strip() if exp.provider and exp.provider.name else "",
+				"payment_date": exp.payment_date,
+				"payment_label": (exp.payment_label or "").strip(),
+				"amount": float(exp.amount or 0),
+			}
+			for exp in calc_expenses_qs[:1000]
+		]
 	chart_labels = [x["mes_nombre"] for x in chart_summary]
 	chart_values = [float(x["interes_mes"] or 0) for x in chart_summary]
 
@@ -1026,10 +1149,9 @@ def dashboard_home(request):
 	investment_daily_rate_pct = Decimal("0")
 	weighted_daily_rate_sum = Decimal("0")
 	weighted_amount_total = Decimal("0")
-	latest_quote_date = cuotaparte_dates[-1] if cuotaparte_dates else None
 	if latest_cuotaparte is not None and latest_quote_date is not None:
 		for lot in active_investment_lots:
-			cuota_origen = _find_cuotaparte_before_or_on(lot["snapshot_date"])
+			cuota_origen = _find_cuotaparte_before_or_on(lot["snapshot_date"], cuotaparte_history, cuotaparte_dates)
 			if cuota_origen in (None, 0):
 				continue
 			rendimiento = (latest_cuotaparte / cuota_origen) - Decimal("1")
@@ -1041,18 +1163,12 @@ def dashboard_home(request):
 	if weighted_amount_total > 0:
 		investment_daily_rate_pct = (weighted_daily_rate_sum / weighted_amount_total) * Decimal("100")
 
-	expense_qs, expense_total = filtered_expenses(
-		scenario=scenario,
-		year=selected_year,
-		month=selected_month,
-		provider=selected_provider,
-		payment_date=selected_payment_date,
-		sort_field=effective_sort or None,
-		sort_dir=effective_dir,
-	)
 	context = {
 		"scenario": scenario,
 		"is_real_scenario": is_real_scenario,
+		"is_projection_scenario_two": is_projection_scenario_two,
+		"show_expense_panel": show_expense_panel,
+		"show_calculators": show_calculators,
 		"selected_scenario_id": scenario.id,
 		"available_scenarios": available_scenarios,
 		"show_cafci_panel": scenario.interest_mode == Scenario.INTEREST_MODE_WEEKLY_AVG,
@@ -1111,18 +1227,34 @@ def dashboard_home(request):
 		"next_dir_amount": _next_dir_for("amount"),
 		"today": date.today(),
 		"home_url_with_scenario": _build_home_url(scenario=scenario, year=selected_year, month=selected_month),
+		"expense_panel_closed_label": "Ver inversiones" if is_real_scenario else "Ver gastos",
+		"expense_panel_open_label": "Ocultar inversiones" if is_real_scenario else "Ocultar gastos",
 	}
-	if context["show_cafci_panel"]:
+
+	# Compute CAFCI-derived rates even for fixed scenarios so the UI can offer both
+	# the configured scenario rate and the “real” (últimos días) rate.
+	needs_cafci_context = context["show_cafci_panel"] or prepare_calculators
+	if needs_cafci_context:
 		context.update(_build_cafci_context(request))
 
 	fixed_rate_decimal = _sanitize_rate_decimal(scenario.daily_interest_rate) or Decimal("0")
 	context["scenario_interest_mode"] = scenario.interest_mode
 
+	# Determine whether we have a real rate to offer in the calculator.
+	# Prefer the CAFCI-series average rate (la planilla diaria) over the 7-day rolling rate.
+	real_arith_rate_decimal = _sanitize_rate_decimal(context.get("cafci_1822_series_arith_rate_decimal"))
+	if real_arith_rate_decimal is None:
+		real_arith_rate_decimal = _sanitize_rate_decimal(context.get("cafci_1822_7day_rate_decimal"))
+	if real_arith_rate_decimal is None:
+		real_arith_rate_decimal = _sanitize_rate_decimal(context.get("cafci_1822_estimated_rate_decimal"))
+	real_geom_rate_decimal = _sanitize_rate_decimal(context.get("cafci_1822_geometric_rate_decimal"))
+	context["rate_source_options"] = []
+
 	if scenario.interest_mode == Scenario.INTEREST_MODE_WEEKLY_AVG:
 		# Weekly-average scenario: prefer calculated rates from series/history.
 		preferred_rates = [
-			_sanitize_rate_decimal(context.get("cafci_1822_series_arith_rate_decimal")),
-			_sanitize_rate_decimal(context.get("cafci_1822_series_geom_rate_decimal")),
+			real_arith_rate_decimal,
+			real_geom_rate_decimal,
 			_sanitize_rate_decimal(context.get("cafci_1822_geometric_rate_decimal")),
 			_sanitize_rate_decimal(context.get("cafci_1822_7day_rate_decimal")),
 			_sanitize_rate_decimal(context.get("cafci_1822_estimated_rate_decimal")),
@@ -1131,18 +1263,44 @@ def dashboard_home(request):
 		context["daily_rate_pct"] = float(selected_rate_decimal * Decimal("100"))
 		context["daily_rate_pct_input"] = f"{(selected_rate_decimal * Decimal('100')):.4f}"
 		context["adelanto_daily_rate_decimal"] = _rate_decimal_to_plain_string(selected_rate_decimal)
-		context["calculator_rate_arith_decimal"] = _rate_decimal_to_plain_string(
-			_sanitize_rate_decimal(context.get("cafci_1822_series_arith_rate_decimal")) or selected_rate_decimal
-		)
-		context["calculator_rate_geom_decimal"] = _rate_decimal_to_plain_string(
-			_sanitize_rate_decimal(context.get("cafci_1822_series_geom_rate_decimal")) or selected_rate_decimal
-		)
 	else:
-		# Fixed scenario: keep explicit configured rate (e.g., 0.0967%) everywhere in calculators.
+		# Fixed scenario: keep explicit configured rate (e.g., 0.0967%) as default.
 		context["daily_rate_pct"] = float(fixed_rate_decimal * Decimal("100"))
 		context["daily_rate_pct_input"] = f"{(fixed_rate_decimal * Decimal('100')):.4f}"
+		context["adelanto_daily_rate_decimal"] = _rate_decimal_to_plain_string(fixed_rate_decimal)
+
+	# Always expose the most recent CAFCI-derived rates for the "real" option.
+	context["calculator_rate_arith_decimal"] = _rate_decimal_to_plain_string(real_arith_rate_decimal or fixed_rate_decimal)
+	context["calculator_rate_geom_decimal"] = _rate_decimal_to_plain_string(real_geom_rate_decimal or fixed_rate_decimal)
+
+	rate_comparison_scenario = _get_dashboard_rate_comparison_scenario(
+		current_scenario=scenario,
+		available_scenarios=available_scenarios,
+	)
+	# Provide a consistent dropdown with at least two rate sources (scenario vs real).
+	# "Real" always uses the CAFCI-derived recent rate (últimos días), even if the scenario 2 rate is configured the same.
+	real_label = "Real (últimos días)"
+	real_rate_decimal = real_arith_rate_decimal or real_geom_rate_decimal or Decimal("0")
+	if rate_comparison_scenario is not None:
+		# Use scenario 2's name for the label, but keep the CAFCI-derived numeric rate.
+		real_label = f"{rate_comparison_scenario.name} (real)"
+
+	# Labels to show in the dropdown.
+	# - "Tasa proyectada febrero" = fixed configured rate (escenario 1)
+	# - "Promedio" = CAFCI-derived moving average (real)
+	fixed_label = "Tasa proyectada febrero"
+	real_label_display = "Promedio"
+	context["rate_source_options"] = [
+		_build_rate_choice_option(fixed_label, fixed_rate_decimal, value="scenario", is_default=True),
+		_build_rate_choice_option(real_label_display, real_rate_decimal, value="real"),
+	]
+
+	# If the fixed rate equals the real rate, this still shows the selector, but it won't change the result.
+	context["has_real_rate"] = len(context["rate_source_options"]) > 1
+	if not prepare_calculators:
 		fixed_rate_str = _rate_decimal_to_plain_string(fixed_rate_decimal)
-		context["adelanto_daily_rate_decimal"] = fixed_rate_str
+		context["rate_source_options"] = []
+		context["has_real_rate"] = False
 		context["calculator_rate_arith_decimal"] = fixed_rate_str
 		context["calculator_rate_geom_decimal"] = fixed_rate_str
 

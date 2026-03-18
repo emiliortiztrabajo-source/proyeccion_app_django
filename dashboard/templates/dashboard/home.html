@@ -96,6 +96,16 @@
   {% else %}
   <div class="panel chart-panel">
     <h3>Interés diario acumulado — Mes a mes — Año {{ selected_year }}</h3>
+    {% if is_projection_scenario_two and perms.dashboard.add_expense %}
+    <div class="panel-actions" style="margin-bottom: 12px;">
+      <a
+        href="{% url 'dashboard:investment_import_excel' %}?scenario_id={{ scenario.id }}&year={{ selected_year }}&month={{ selected_month }}"
+        class="btn-secondary"
+      >
+        Importar inversiones
+      </a>
+    </div>
+    {% endif %}
     <div class="chart-wrap">
       <canvas id="chartInteresMes"></canvas>
     </div>
@@ -117,6 +127,7 @@
   {% endif %}
 </section>
 
+{% if show_expense_panel %}
 <section class="panel panel-collapsible" id="expensePanel" data-panel-name="expense">
   <div class="panel-title-row">
     <h3>{% if is_real_scenario %}🧾 Gastos e ingresos{% else %}🧾 Bolsas de gastos{% endif %}</h3>
@@ -166,8 +177,10 @@
         class="btn-secondary btn-toggle-panel"
         aria-controls="expensePanelContent"
         aria-expanded="false"
+        data-collapsed-label="{{ expense_panel_closed_label }}"
+        data-expanded-label="{{ expense_panel_open_label }}"
       >
-        Ver gastos
+        {{ expense_panel_closed_label }}
       </button>
     </div>
   </div>
@@ -697,6 +710,8 @@
   </div>
 </section>
 
+{% endif %}
+
 {% if show_cafci_panel %}
 <section class="panel panel-cafci">
   <div class="panel-title-row">
@@ -768,6 +783,8 @@
 </section>
 {% endif %}
 
+{% if show_calculators %}
+{% if not is_real_scenario %}
 <section class="panel panel-calculators">
   <div class="panel-title-row">
     <h3>🧮 Calculadoras</h3>
@@ -827,6 +844,21 @@
       {% if scenario_interest_mode == 'WEEKLY_AVG' and cafci_1822_geometric_rate_pct %}
         <p class="section-meta section-meta--hint">Tasa geométrica (hist): <strong>{{ cafci_1822_geometric_rate_pct|floatformat:6 }}%</strong> — puntos: {{ cafci_1822_geometric_points_used }}</p>
       {% endif %}
+      {% if has_real_rate %}
+      <div class="form-row">
+        <label for="rateSource">Tasa a usar</label>
+        <select id="rateSource">
+          {% if rate_source_options %}
+          {% for option in rate_source_options %}
+          <option value="{{ option.value }}" data-rate-decimal="{{ option.rate_decimal }}" data-rate-pct="{{ option.rate_pct_input }}"{% if option.is_default %} selected{% endif %}>{{ option.label }} ({{ option.rate_pct_display }}%)</option>
+          {% endfor %}
+          {% else %}
+          <option value="scenario"{% if scenario_interest_mode != 'WEEKLY_AVG' %} selected{% endif %}>Escenario (fija)</option>
+          <option value="real"{% if scenario_interest_mode == 'WEEKLY_AVG' %} selected{% endif %}>Real (últimos días)</option>
+          {% endif %}
+        </select>
+      </div>
+      {% endif %}
       <input type="hidden" id="server_rate_arith" value="{{ calculator_rate_arith_decimal|default:adelanto_daily_rate_decimal }}">
       <input type="hidden" id="server_rate_geom" value="{{ calculator_rate_geom_decimal|default:adelanto_daily_rate_decimal }}">
       <div class="calc-actions">
@@ -863,7 +895,9 @@
     </article>
   </div>
 </section>
+{% endif %}
 
+{% endif %}
 {% endif %}
 {% endblock %}
 
@@ -873,7 +907,9 @@
 {{ chart_labels|json_script:"chart-labels" }}
 {{ chart_values|json_script:"chart-values" }}
 {% endif %}
+{% if show_calculators and not is_real_scenario %}
 {{ calc_expense_options|json_script:"calc-expense-options" }}
+{% endif %}
 <script>
   // Fallback local para asegurar el toggle aunque haya cache de static JS.
   (function bindExpenseToggle() {
@@ -882,9 +918,11 @@
     if (!toggleButton || !panelContent) return;
     if (toggleButton.dataset.boundToggle === '1') return;
 
+    const collapsedLabel = toggleButton.dataset.collapsedLabel || 'Ver gastos';
+    const expandedLabel = toggleButton.dataset.expandedLabel || 'Ocultar gastos';
     const setExpanded = (expanded) => {
       toggleButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      toggleButton.textContent = expanded ? 'Ocultar gastos' : 'Ver gastos';
+      toggleButton.textContent = expanded ? expandedLabel : collapsedLabel;
       panelContent.hidden = !expanded;
     };
 
@@ -922,9 +960,11 @@
   renderInteresChart('chartInteresMes', labels, values);
   {% endif %}
 
+  {% if show_calculators and not is_real_scenario %}
   const calcOptionsEl = document.getElementById('calc-expense-options');
   const calcOptions = calcOptionsEl ? JSON.parse(calcOptionsEl.textContent) : [];
   initAdelantoCalculator(calcOptions);
+  {% endif %}
 
   const periodForm = document.getElementById('periodFilterForm');
   if (periodForm) {
@@ -939,9 +979,11 @@
   if (typeof initCafciPanelToggle === 'function') {
     initCafciPanelToggle();
   }
+  {% if show_calculators and not is_real_scenario %}
   if (typeof initAdelantoMethodToggle === 'function') {
     initAdelantoMethodToggle();
   }
+  {% endif %}
 
   (function bindCalendarTooltips() {
     const tooltip = document.createElement('div');
