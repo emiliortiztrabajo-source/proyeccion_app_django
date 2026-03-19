@@ -11,7 +11,7 @@ class Scenario(models.Model):
 
 	name = models.CharField(max_length=120)
 	year = models.PositiveIntegerField()
-	start_month = models.PositiveSmallIntegerField(default=3)
+	start_month = models.PositiveSmallIntegerField(default=2)
 	daily_interest_rate = models.DecimalField(max_digits=8, decimal_places=6, default=0.000967)
 	interest_mode = models.CharField(max_length=20, choices=INTEREST_MODE_CHOICES, default=INTEREST_MODE_FIXED)
 	is_active = models.BooleanField(default=True)

@@ -9,9 +9,13 @@ from django.urls import reverse
 
 from dashboard.models import DailyProjection, Expense, FundCuotaparteHistory, IncomeEntry, InvestmentDailyFlow, InvestmentDailySnapshot, Provider, Scenario
 from dashboard.services.dashboard_logic import build_real_projection_snapshot, get_dashboard_scenarios, resolve_default_scenario
+from dashboard.services.dashboard_logic import build_year_cash_projection
+from dashboard.services.dashboard_logic import resolve_dashboard_start_month
 from dashboard.services.expense_excel_io import import_expenses_from_excel
+from dashboard.services.excel_importer import _import_ingresos_diarios
 from dashboard.services.income_excel_io import import_incomes_from_excel
 from dashboard.services.investment_excel_io import import_investment_snapshots_from_excel
+from dashboard.forms import ExcelImportForm
 
 
 class RealProjectionSnapshotTests(TestCase):
@@ -67,6 +71,39 @@ class DashboardScenarioVisibilityTests(TestCase):
 		default_scenario = resolve_default_scenario()
 
 		self.assertEqual(default_scenario.name, "ESCENARIO 1 - PROYECCION CONSERVADORA")
+
+
+class ScenarioStartMonthDefaultsTests(TestCase):
+	def test_scenario_defaults_to_february_start_month(self):
+		scenario = Scenario.objects.create(name="ESCENARIO DEFAULT", year=2026)
+		self.assertEqual(scenario.start_month, 2)
+
+	def test_excel_import_form_defaults_to_february_start_month(self):
+		form = ExcelImportForm()
+		self.assertEqual(form.fields["start_month"].initial, 2)
+
+	def test_cash_projection_does_not_backfill_march_caja_into_february(self):
+		scenario = Scenario.objects.create(name="ESCENARIO FEBRERO", year=2026, start_month=2, daily_interest_rate=Decimal("0.001"))
+		DailyProjection.objects.create(
+			scenario=scenario,
+			projection_date=date(2026, 3, 1),
+			caja_inicial=Decimal("1000.00"),
+			ingresos_financieros_excel=Decimal("0.00"),
+			gastos_proyectados_excel=Decimal("0.00"),
+		)
+
+		rows = build_year_cash_projection(scenario=scenario, year=2026, start_month=2)
+		feb_28 = next(row for row in rows if row["fecha"] == date(2026, 2, 28))
+		mar_1 = next(row for row in rows if row["fecha"] == date(2026, 3, 1))
+
+		self.assertIsNone(feb_28["caja_base"])
+		self.assertEqual(mar_1["caja_base"], Decimal("1000.00"))
+
+	def test_dashboard_start_month_uses_earliest_available_data_month(self):
+		scenario = Scenario.objects.create(name="ESCENARIO 1 - PROYECCION CONSERVADORA", year=2026, start_month=3, daily_interest_rate=Decimal("0.001"))
+		IncomeEntry.objects.create(scenario=scenario, entry_date=date(2026, 2, 2), amount=Decimal("100.00"))
+
+		self.assertEqual(resolve_dashboard_start_month(scenario=scenario, year=2026), 2)
 
 
 class DashboardHomeCalculatorContextTests(TestCase):
@@ -195,6 +232,32 @@ class DashboardHomeCalculatorContextTests(TestCase):
 		self.assertIsNotNone(today_cell)
 		self.assertTrue(today_cell["is_today"])
 		self.assertContains(response, 'class="mini-badge">Hoy</div>', html=False)
+
+	def test_dashboard_home_month_filter_includes_february_when_data_starts_in_february(self):
+		user = get_user_model().objects.create_user(username="febtester", password="secret123")
+		self.client.force_login(user)
+
+		scenario = Scenario.objects.create(
+			name="ESCENARIO 1 - PROYECCION CONSERVADORA",
+			year=2026,
+			start_month=3,
+			daily_interest_rate=Decimal("0.001"),
+			is_active=True,
+		)
+		IncomeEntry.objects.create(
+			scenario=scenario,
+			entry_date=date(2026, 2, 2),
+			amount=Decimal("100.00"),
+			source_tag="excel",
+		)
+
+		response = self.client.get(
+			reverse("dashboard:home"),
+			{"scenario_id": scenario.id, "year": 2026},
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertIn((2, "Febrero"), response.context["period_form"].fields["month"].choices)
 
 	def test_dashboard_home_real_scenario_shows_today_date_in_yield_labels(self):
 		user = get_user_model().objects.create_user(username="yielddatetester", password="secret123")
@@ -808,6 +871,35 @@ class DashboardHomeCalculatorContextTests(TestCase):
 
 
 class IncomeExcelImportTests(TestCase):
+	def test_import_daily_projection_incomes_supports_groupby_with_current_pandas(self):
+		scenario = Scenario.objects.create(name="ESCENARIO EXCEL", year=2026, start_month=2, daily_interest_rate=Decimal("0.001"))
+
+		df = pd.DataFrame(
+			[
+				{"FEBRERO-DIA": date(2026, 2, 2), "FEBRERO2": 1000, "MARZO-DIA": date(2026, 3, 3), "MARZO2": 2000},
+				{"FEBRERO-DIA": date(2026, 2, 2), "FEBRERO2": 500, "MARZO-DIA": date(2026, 3, 4), "MARZO2": 250},
+			]
+		)
+		buffer = BytesIO()
+		with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+			df.to_excel(writer, sheet_name="INGRESOSXDIA-HABIL", index=False, startrow=1)
+
+		_import_ingresos_diarios(buffer.getvalue(), scenario, 2026)
+
+		self.assertEqual(IncomeEntry.objects.filter(scenario=scenario).count(), 3)
+		self.assertEqual(
+			IncomeEntry.objects.get(scenario=scenario, entry_date=date(2026, 2, 2)).amount,
+			Decimal("1500.00"),
+		)
+		self.assertEqual(
+			IncomeEntry.objects.get(scenario=scenario, entry_date=date(2026, 3, 3)).amount,
+			Decimal("2000.00"),
+		)
+		self.assertEqual(
+			IncomeEntry.objects.get(scenario=scenario, entry_date=date(2026, 3, 4)).amount,
+			Decimal("250.00"),
+		)
+
 	def test_import_incomes_from_tabular_excel_updates_same_date(self):
 		scenario = Scenario.objects.create(name="ESCENARIO REAL", year=2026, start_month=3, daily_interest_rate=Decimal("0.001"))
 		IncomeEntry.objects.create(

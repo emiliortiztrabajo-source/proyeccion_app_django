@@ -2,9 +2,9 @@ import calendar
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import Min, Sum
 
-from dashboard.models import DailyProjection, Expense, IncomeEntry, Scenario
+from dashboard.models import DailyProjection, Expense, IncomeEntry, InvestmentDailySnapshot, PaymentDayRule, Scenario
 from dashboard.services.parsing import MONTH_NAME_ES
 
 
@@ -26,6 +26,47 @@ def is_dashboard_visible_scenario(scenario: Scenario) -> bool:
 def get_dashboard_scenarios():
     scenarios = Scenario.objects.order_by("-year", "name")
     return [scenario for scenario in scenarios if is_dashboard_visible_scenario(scenario)]
+
+
+def resolve_dashboard_start_month(*, scenario: Scenario, year: int) -> int:
+    months = [scenario.start_month]
+
+    first_projection = (
+        DailyProjection.objects.filter(scenario=scenario, projection_date__year=year)
+        .aggregate(min_date=Min("projection_date"))["min_date"]
+    )
+    if first_projection:
+        months.append(first_projection.month)
+
+    first_income = (
+        IncomeEntry.objects.filter(scenario=scenario, entry_date__year=year)
+        .aggregate(min_date=Min("entry_date"))["min_date"]
+    )
+    if first_income:
+        months.append(first_income.month)
+
+    first_investment = (
+        InvestmentDailySnapshot.objects.filter(scenario=scenario, snapshot_date__year=year)
+        .aggregate(min_date=Min("snapshot_date"))["min_date"]
+    )
+    if first_investment:
+        months.append(first_investment.month)
+
+    first_rule_month = (
+        PaymentDayRule.objects.filter(scenario=scenario, payment_date__year=year)
+        .aggregate(min_month=Min("month"))["min_month"]
+    )
+    if first_rule_month:
+        months.append(first_rule_month)
+
+    first_expense_month = (
+        Expense.objects.filter(scenario=scenario, year=year)
+        .aggregate(min_month=Min("month"))["min_month"]
+    )
+    if first_expense_month:
+        months.append(first_expense_month)
+
+    return min(months)
 
 
 def _daterange(start_date: date, end_date: date):
@@ -72,6 +113,7 @@ def build_year_cash_projection(scenario: Scenario, year: int, start_month: int |
 
     first_projection = projection_qs.exclude(caja_inicial__isnull=True).first()
     caja_ini_day1 = first_projection.caja_inicial if first_projection else None
+    first_projection_date = first_projection.projection_date if first_projection else None
 
     rows = []
     prev_total = None
@@ -86,7 +128,12 @@ def build_year_cash_projection(scenario: Scenario, year: int, start_month: int |
 
         gasto = -_decimal(expense_map.get(day))
 
-        caja_inicial = caja_ini_day1 if prev_total is None else prev_total
+        if prev_total is not None:
+            caja_inicial = prev_total
+        elif first_projection_date and day >= first_projection_date:
+            caja_inicial = caja_ini_day1
+        else:
+            caja_inicial = None
 
         if caja_inicial is None:
             neto = None

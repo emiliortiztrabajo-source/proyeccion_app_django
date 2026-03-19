@@ -5,7 +5,7 @@ from bisect import bisect_right
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required, user_passes_test
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
-from django.db.models import Min, Sum
+from django.db.models import Sum
 from django.db.utils import OperationalError, ProgrammingError
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
@@ -38,6 +38,7 @@ from .services.dashboard_logic import (
 	get_month_calendar_payload,
 	is_dashboard_visible_scenario,
 	monthly_interest_summary,
+	resolve_dashboard_start_month,
 	resolve_default_scenario,
 )
 from .services.parsing import MONTH_NAME_ES
@@ -839,13 +840,7 @@ def dashboard_home(request):
 			selected_year = scenario.year
 
 	# Determine the earliest month with data so the user can navigate to January/Febrero if needed.
-	dashboard_start_month = scenario.start_month
-	min_investment_date = (
-		InvestmentDailySnapshot.objects.filter(scenario=scenario, snapshot_date__year=selected_year)
-			.aggregate(min_date=Min("snapshot_date"))["min_date"]
-	)
-	if min_investment_date:
-		dashboard_start_month = min(dashboard_start_month, min_investment_date.month)
+	dashboard_start_month = resolve_dashboard_start_month(scenario=scenario, year=selected_year)
 
 	period_form = DashboardFilterForm(
 		request.GET or None,
@@ -895,13 +890,7 @@ def dashboard_home(request):
 		selected_month = int(period_form.cleaned_data["month"])
 
 		# Recompute the earliest month with data for the chosen scenario/year so the month selector can include Enero/Feb.
-		dashboard_start_month = scenario.start_month
-		min_investment_date = (
-			InvestmentDailySnapshot.objects.filter(scenario=scenario, snapshot_date__year=selected_year)
-				.aggregate(min_date=Min("snapshot_date"))["min_date"]
-		)
-		if min_investment_date:
-			dashboard_start_month = min(dashboard_start_month, min_investment_date.month)
+		dashboard_start_month = resolve_dashboard_start_month(scenario=scenario, year=selected_year)
 		if selected_month < dashboard_start_month:
 			selected_month = dashboard_start_month
 		period_form.fields["month"].choices = [(m, MONTH_NAME_ES[m]) for m in range(dashboard_start_month, 13)]

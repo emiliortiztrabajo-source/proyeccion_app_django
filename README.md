@@ -30,7 +30,7 @@ Dashboard financiero institucional reconstruido en Django a partir del flujo ori
 ## Importación Excel
 ### Opción 1: comando
 ```bash
-python manage.py import_excel_data --path "PROYECCION 2026 (4).xlsx" --scenario "ESCENARIO 1" --year 2026 --start-month 3
+python manage.py import_excel_data --path "PROYECCION 2026 (4).xlsx" --scenario "ESCENARIO 1" --year 2026 --start-month 2
 ```
 
 ### Opción 2: web

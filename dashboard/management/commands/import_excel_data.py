@@ -10,7 +10,7 @@ class Command(BaseCommand):
         parser.add_argument("--path", required=True, help="Ruta al archivo Excel")
         parser.add_argument("--scenario", default="ESCENARIO 1", help="Nombre del escenario")
         parser.add_argument("--year", type=int, default=2026, help="Año de proyección")
-        parser.add_argument("--start-month", type=int, default=3, help="Mes de inicio")
+        parser.add_argument("--start-month", type=int, default=2, help="Mes de inicio")
         parser.add_argument("--no-replace", action="store_true", help="No borrar datos previos")
 
     def handle(self, *args, **options):

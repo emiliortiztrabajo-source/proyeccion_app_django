@@ -146,11 +146,12 @@ def _import_ingresos_diarios(excel_bytes: bytes, scenario: Scenario, year: int):
     merged = merged.dropna(subset=["entry_date"])
     merged = merged[merged["entry_date"].dt.year == year]
 
-    grouped = merged.groupby(merged["entry_date"].dt.date, as_index=False)["amount"].sum()
+    merged["entry_day"] = merged["entry_date"].dt.date
+    grouped = merged.groupby("entry_day", as_index=False)["amount"].sum()
     records = [
         IncomeEntry(
             scenario=scenario,
-            entry_date=row["entry_date"],
+            entry_date=row["entry_day"],
             amount=Decimal(str(row["amount"])).quantize(Decimal("0.01")),
             source_tag="excel",
         )
@@ -297,7 +298,7 @@ def _clear_scenario_data(scenario: Scenario):
     Expense.objects.filter(scenario=scenario).delete()
 
 
-def import_excel_bytes(*, excel_bytes: bytes, scenario_name: str = "ESCENARIO 1", year: int = 2026, start_month: int = 3, replace_existing: bool = True):
+def import_excel_bytes(*, excel_bytes: bytes, scenario_name: str = "ESCENARIO 1", year: int = 2026, start_month: int = 2, replace_existing: bool = True):
     main_df = _load_sheet(excel_bytes, SHEET_MAIN)
 
     with transaction.atomic():

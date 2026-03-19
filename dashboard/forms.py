@@ -26,7 +26,7 @@ class DashboardFilterForm(forms.Form):
     year = forms.IntegerField(label="Año")
     month = forms.ChoiceField(label="Mes", choices=[])
 
-    def __init__(self, *args, year=2026, start_month=3, scenario_choices=None, selected_scenario_id=None, **kwargs):
+    def __init__(self, *args, year=2026, start_month=2, scenario_choices=None, selected_scenario_id=None, **kwargs):
         super().__init__(*args, **kwargs)
         normalized_choices = [(str(pk), label) for pk, label in (scenario_choices or [])]
         self.fields["scenario_id"].choices = normalized_choices
@@ -158,7 +158,7 @@ class ExcelImportForm(forms.Form):
     excel_file = forms.FileField(label="Archivo Excel (.xlsx)")
     scenario_name = forms.CharField(label="Escenario", initial="ESCENARIO 1", max_length=120)
     year = forms.IntegerField(label="Año", initial=2026)
-    start_month = forms.IntegerField(label="Mes de inicio", initial=3, min_value=1, max_value=12)
+    start_month = forms.IntegerField(label="Mes de inicio", initial=2, min_value=1, max_value=12)
     replace_existing = forms.BooleanField(label="Reemplazar datos existentes del escenario", initial=True, required=False)
 
 
