@@ -117,6 +117,16 @@
         <h4>Rendimiento al {{ today|date:'j-n' }}</h4>
         <p>$ {{ total_hasta_hoy|money_ar }}</p>
       </article>
+      {% if active_investments_summary and active_investments_summary.available %}
+      <article
+        class="kpi-card kpi-card--compact chart-kpi-subcard kpi-card--real-active"
+        data-tooltip="{{ active_investments_summary.tooltip|escape }}"
+      >
+        <h4>Inversiones activas reales</h4>
+        <div class="kpi-card__eyebrow">Dato real al día de hoy</div>
+        <p>$ {{ active_investments_summary.total_sell_today|money_ar }}</p>
+      </article>
+      {% endif %}
     </div>
   </div>
   {% endif %}
@@ -1012,7 +1022,7 @@
       tooltip.style.display = 'none';
     };
 
-    document.querySelectorAll('.mini-cell[data-tooltip]').forEach((cell) => {
+    document.querySelectorAll('[data-tooltip]').forEach((cell) => {
       cell.addEventListener('mouseenter', (evt) => showTooltip(evt, cell.dataset.tooltip));
       cell.addEventListener('mouseleave', hideTooltip);
       cell.addEventListener('click', (evt) => showTooltip(evt, cell.dataset.tooltip));

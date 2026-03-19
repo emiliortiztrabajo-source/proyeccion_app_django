@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
+from unittest.mock import patch
 
 import pandas as pd
 from django.contrib.auth import get_user_model
@@ -11,6 +12,7 @@ from dashboard.models import DailyProjection, Expense, FundCuotaparteHistory, In
 from dashboard.services.dashboard_logic import build_real_projection_snapshot, get_dashboard_scenarios, resolve_default_scenario
 from dashboard.services.dashboard_logic import build_year_cash_projection
 from dashboard.services.dashboard_logic import resolve_dashboard_start_month
+from dashboard.services.active_investments import load_active_investments_summary
 from dashboard.services.expense_excel_io import import_expenses_from_excel
 from dashboard.services.excel_importer import _import_ingresos_diarios
 from dashboard.services.income_excel_io import import_incomes_from_excel
@@ -48,6 +50,35 @@ class RealProjectionSnapshotTests(TestCase):
 		self.assertEqual(snapshot["actual_expense_total"], Decimal("80.00"))
 		self.assertEqual(snapshot["net_variance_total"], Decimal("-10.00"))
 		self.assertEqual(snapshot["days_with_real_data"], 1)
+
+
+class ActiveInvestmentsSummaryTests(TestCase):
+	def test_load_active_investments_summary_reads_totals_and_detail(self):
+		df = pd.DataFrame(
+			[
+				{"fondo": "Fondo A", "pendiente de retiro": 1000, "si vendes hoy": 1100},
+				{"fondo": "Fondo B", "pendiente de retiro": 2000, "si vendes hoy": 2100},
+				{"fondo": "Fondo C", "pendiente de retiro": 0, "si vendes hoy": 0},
+			]
+		)
+		buffer = BytesIO()
+		with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+			df.to_excel(writer, sheet_name="Cajas por fondo", index=False)
+
+		import tempfile
+		from pathlib import Path
+
+		with tempfile.TemporaryDirectory() as tmpdir:
+			path = Path(tmpdir) / "inversionesactivas.xlsx"
+			path.write_bytes(buffer.getvalue())
+			summary = load_active_investments_summary(path)
+
+		self.assertTrue(summary["available"])
+		self.assertEqual(summary["total_invested"], Decimal("3000.00"))
+		self.assertEqual(summary["total_sell_today"], Decimal("3200.00"))
+		self.assertEqual(len(summary["rows"]), 2)
+		self.assertIn("Fondo A", summary["tooltip"])
+		self.assertIn("Invertido: $ 1,000.00", summary["tooltip"])
 
 
 class DashboardScenarioVisibilityTests(TestCase):
@@ -386,6 +417,44 @@ class DashboardHomeCalculatorContextTests(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(response.context["total_hasta_hoy"], Decimal("30.00"))
 		self.assertContains(response, f"Rendimiento al {today.day}-{today.month}")
+
+	def test_dashboard_home_projection_shows_active_investments_sell_today_card(self):
+		user = get_user_model().objects.create_user(username="activetester", password="secret123")
+		self.client.force_login(user)
+
+		scenario = Scenario.objects.create(
+			name="ESCENARIO 1 - PROYECCION CONSERVADORA",
+			year=2026,
+			start_month=2,
+			daily_interest_rate=Decimal("0.001"),
+			is_active=True,
+		)
+		DailyProjection.objects.create(
+			scenario=scenario,
+			projection_date=date(2026, 2, 2),
+			interes_diario_excel=Decimal("100.00"),
+		)
+
+		with patch(
+			"dashboard.views.load_active_investments_summary",
+			return_value={
+				"available": True,
+				"total_sell_today": Decimal("3200.00"),
+				"total_invested": Decimal("3000.00"),
+				"rows": [],
+				"tooltip": "Fondo A | Invertido: $ 1,000.00 | Si vendes hoy: $ 1,100.00",
+			},
+		):
+			response = self.client.get(
+				reverse("dashboard:home"),
+				{"scenario_id": scenario.id, "year": 2026, "month": 2},
+			)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertContains(response, "Inversiones activas reales")
+		self.assertContains(response, "Dato real al día de hoy")
+		self.assertContains(response, "$ 3.200,00")
+		self.assertContains(response, "Fondo A | Invertido: $ 1,000.00 | Si vendes hoy: $ 1,100.00")
 
 	def test_dashboard_home_non_real_expense_panel_is_not_rendered_twice(self):
 		user = get_user_model().objects.create_user(username="expensetester", password="secret123")

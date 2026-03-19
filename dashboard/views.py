@@ -28,6 +28,7 @@ from .forms import (
 	ManualExpenseForm,
 )
 from .models import Expense, ExpenseChangeLog, FundCuotaparteHistory, IncomeEntry, InvestmentDailySnapshot, Provider, Scenario
+from .services.active_investments import load_active_investments_summary
 from .services.cafci_api import CafciApiError, CafciNetworkError, build_cafci_snapshot
 from .services.expense_excel_io import export_expenses_to_excel, import_expenses_from_excel
 from .services.dashboard_logic import (
@@ -1126,6 +1127,7 @@ def dashboard_home(request):
 		]
 	chart_labels = [x["mes_nombre"] for x in chart_summary]
 	chart_values = [float(x["interes_mes"] or 0) for x in chart_summary]
+	active_investments_summary = load_active_investments_summary() if not is_real_scenario else None
 
 	latest_investment_current = investment_rows_current[-1] if investment_rows_current else None
 	investment_active_capital = active_investment_capital if is_real_scenario else (latest_investment_current.active_capital if latest_investment_current else Decimal("0"))
@@ -1173,6 +1175,7 @@ def dashboard_home(request):
 		"monthly_summary": monthly_summary,
 		"chart_labels": chart_labels,
 		"chart_values": chart_values,
+		"active_investments_summary": active_investments_summary,
 		"expense_rows": expense_qs[:250],
 		"expense_total": expense_total,
 		"expense_change_logs": expense_change_logs,

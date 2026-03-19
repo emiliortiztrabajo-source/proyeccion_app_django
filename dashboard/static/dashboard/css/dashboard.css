@@ -133,11 +133,37 @@ input, select {
 .kpi-card { border: 1px solid rgba(255,255,255,.1); border-radius: 14px; padding: 12px; background: rgba(255,255,255,.02); }
 .kpi-card h4 { margin: 0; font-size: 12px; opacity: .8; }
 .kpi-card p { margin: 8px 0 0; font-size: 24px; font-weight: 800; }
+.kpi-card__eyebrow {
+  display: inline-flex;
+  margin-top: 8px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
 .chart-kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
 .chart-kpi-subcard { grid-column: 1 / 2; }
 .kpi-card--compact { padding: 12px 14px; }
 .kpi-card--compact h4 { font-size: 12px; margin-bottom: 6px; }
 .kpi-card--compact p { font-size: 20px; }
+.kpi-card--real-active {
+  border-color: rgba(16, 185, 129, .55);
+  background: linear-gradient(180deg, rgba(6, 78, 59, .85), rgba(4, 47, 46, .92));
+  box-shadow: 0 10px 30px rgba(16, 185, 129, .18);
+}
+.kpi-card--real-active h4 {
+  color: #d1fae5;
+  opacity: 1;
+}
+.kpi-card--real-active p {
+  color: #ecfdf5;
+}
+.kpi-card--real-active .kpi-card__eyebrow {
+  color: #064e3b;
+  background: #a7f3d0;
+}
 .section-meta { margin: 0 0 10px; font-size: 13px; opacity: .9; }
 .section-meta--inline { margin: 0; }
 .cafci-subtitle { margin: 14px 0 8px; }
